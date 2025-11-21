@@ -44,11 +44,13 @@ const setupGracefulShutdown = () => {
       server.close(async () => {
         logger.info('HTTP server closed');
 
-        // Cerrar conexiones de DB
+        // Cerrar conexiones de DB solo si está habilitada
         try {
           const { sequelize } = await import('./config/database.js');
-          await sequelize.close();
-          logger.info('Database connection closed');
+          if (sequelize) {
+            await sequelize.close();
+            logger.info('Database connection closed');
+          }
         } catch (error) {
           logger.error({ error }, 'Error closing the database');
         }

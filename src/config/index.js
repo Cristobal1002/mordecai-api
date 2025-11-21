@@ -10,12 +10,17 @@ const requiredEnvVars = [
 ];
 
 const validateEnvVars = () => {
-  const missing = requiredEnvVars.filter((key) => !process.env[key]);
+  // Solo validar variables de DB si está habilitada
+  const dbEnabled = process.env.DB_ENABLED !== 'false';
   
-  if (missing.length > 0) {
-    throw new Error(
-      `Environment variables missing: ${missing.join(', ')}`
-    );
+  if (dbEnabled) {
+    const missing = requiredEnvVars.filter((key) => !process.env[key]);
+    
+    if (missing.length > 0) {
+      throw new Error(
+        `Environment variables missing: ${missing.join(', ')}`
+      );
+    }
   }
 };
 
@@ -32,6 +37,7 @@ export const config = {
     apiVersion: process.env.API_VERSION || 'v1',
   },
   db: {
+    enabled: process.env.DB_ENABLED !== 'false', // Por defecto habilitado, deshabilitar con DB_ENABLED=false
     name: process.env.DB_NAME,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,

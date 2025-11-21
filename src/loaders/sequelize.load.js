@@ -4,6 +4,18 @@ import { config } from '../config/index.js';
 import { initModels } from '../models/index.js';
 
 export const loadDatabase = async () => {
+  // Si la base de datos no está habilitada, salir sin hacer nada
+  if (!config.db.enabled) {
+    logger.info('Database is disabled. Skipping database connection.');
+    return;
+  }
+
+  // Si sequelize es null, significa que la configuración está incompleta
+  if (!sequelize) {
+    logger.warn('Database is enabled but configuration is incomplete. Skipping database connection.');
+    return;
+  }
+
   try {
     logger.info('Connecting to PostgreSQL...');
     await sequelize.authenticate();
