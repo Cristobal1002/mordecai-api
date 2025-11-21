@@ -1,0 +1,581 @@
+{
+  "info": {
+    "name": "Mordecai API",
+    "description": "Complete Mordecai authentication system with Firebase, email/password and Google sign-in",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register with Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"displayName\": \"John Doe\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/register",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "register"]
+            },
+            "description": "Register a new user with email and password"
+          }
+        },
+        {
+          "name": "Login with Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/login",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "login"]
+            },
+            "description": "Login with email and password"
+          }
+        },
+        {
+          "name": "Login with Google",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"{{GOOGLE_ID_TOKEN}}\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/google",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "google"]
+            },
+            "description": "Login or register with Google ID token"
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{REFRESH_TOKEN}}\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/refresh",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "refresh"]
+            },
+            "description": "Refresh access token using refresh token"
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/me",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "me"]
+            },
+            "description": "Get current authenticated user profile"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/logout",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "logout"]
+            },
+            "description": "Logout current user and revoke Firebase tokens"
+          }
+        },
+        {
+          "name": "Send Password Reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/password-reset",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "password-reset"]
+            },
+            "description": "Send password reset email"
+          }
+        },
+        {
+          "name": "Verify Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"{{EMAIL_VERIFICATION_TOKEN}}\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/verify-email",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "verify-email"]
+            },
+            "description": "Verify email address with Firebase ID token"
+          }
+        }
+      ]
+    },
+    {
+      "name": "User Management",
+      "item": [
+        {
+          "name": "Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/profile",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "profile"]
+            },
+            "description": "Get complete user profile (PostgreSQL + Firebase data)"
+          }
+        },
+        {
+          "name": "Get Users List (Advanced)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users?page=1&limit=20&sortBy=createdAt&sortOrder=DESC",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-100, default: 20)"
+                },
+                {
+                  "key": "appRole",
+                  "value": "",
+                  "description": "Filter by role: user, admin, moderator, manager, editor",
+                  "disabled": true
+                },
+                {
+                  "key": "isActive",
+                  "value": "",
+                  "description": "Filter by status: true/false",
+                  "disabled": true
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Search in email, displayName, appRole, firebaseUid",
+                  "disabled": true
+                },
+                {
+                  "key": "sortBy",
+                  "value": "createdAt",
+                  "description": "Sort field: createdAt, updatedAt, lastLoginAt, appRole"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "DESC",
+                  "description": "Sort order: ASC, DESC"
+                },
+                {
+                  "key": "includeDeleted",
+                  "value": "",
+                  "description": "Include soft deleted users: true/false",
+                  "disabled": true
+                },
+                {
+                  "key": "dateFrom",
+                  "value": "",
+                  "description": "Filter users created after this date (ISO format)",
+                  "disabled": true
+                },
+                {
+                  "key": "dateTo",
+                  "value": "",
+                  "description": "Filter users created before this date (ISO format)",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get paginated list of users with advanced filtering, search, and sorting (admin/moderator only)"
+          }
+        },
+        {
+          "name": "Get Users Overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/overview",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "overview"]
+            },
+            "description": "Get dashboard summary with user statistics and distributions (admin/moderator only)"
+          }
+        },
+        {
+          "name": "Search Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users?search=john&limit=10",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users"],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "john",
+                  "description": "Search term"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Limit results"
+                }
+              ]
+            },
+            "description": "Search users by email, displayName, or other fields"
+          }
+        },
+        {
+          "name": "Filter Users by Role",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users?appRole=admin&sortBy=lastLoginAt&sortOrder=DESC",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users"],
+              "query": [
+                {
+                  "key": "appRole",
+                  "value": "admin",
+                  "description": "Filter by role"
+                },
+                {
+                  "key": "sortBy",
+                  "value": "lastLoginAt",
+                  "description": "Sort by last login"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "DESC",
+                  "description": "Descending order"
+                }
+              ]
+            },
+            "description": "Filter users by specific role and sort by activity"
+          }
+        },
+        {
+          "name": "Get Users by Date Range",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users?dateFrom=2024-01-01&dateTo=2024-12-31&sortBy=createdAt",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users"],
+              "query": [
+                {
+                  "key": "dateFrom",
+                  "value": "2024-01-01",
+                  "description": "Start date (ISO format)"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "2024-12-31",
+                  "description": "End date (ISO format)"
+                },
+                {
+                  "key": "sortBy",
+                  "value": "createdAt",
+                  "description": "Sort by creation date"
+                }
+              ]
+            },
+            "description": "Get users created within a specific date range"
+          }
+        },
+        {
+          "name": "Update User Role (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appRole\": \"moderator\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/{{TARGET_FIREBASE_UID}}/role",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "{{TARGET_FIREBASE_UID}}", "role"]
+            },
+            "description": "Update user app role (admin only)"
+          }
+        },
+        {
+          "name": "Deactivate User (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/{{TARGET_FIREBASE_UID}}/deactivate",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "{{TARGET_FIREBASE_UID}}", "deactivate"]
+            },
+            "description": "Deactivate user account (admin/moderator only)"
+          }
+        },
+        {
+          "name": "Soft Delete User (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/{{TARGET_FIREBASE_UID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "{{TARGET_FIREBASE_UID}}"]
+            },
+            "description": "Soft delete user (reversible, admin only)"
+          }
+        },
+        {
+          "name": "Restore User (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/{{TARGET_FIREBASE_UID}}/restore",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "{{TARGET_FIREBASE_UID}}", "restore"]
+            },
+            "description": "Restore soft deleted user (admin only)"
+          }
+        },
+        {
+          "name": "Permanently Delete User (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/{{TARGET_FIREBASE_UID}}/permanent",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "{{TARGET_FIREBASE_UID}}", "permanent"]
+            },
+            "description": "Permanently delete user (IRREVERSIBLE, admin only)"
+          }
+        },
+        {
+          "name": "Get Deleted Users (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/deleted?page=1&limit=20",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "deleted"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Get list of soft deleted users (admin only)"
+          }
+        },
+        {
+          "name": "Get User Statistics (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/users/stats",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "users", "stats"]
+            },
+            "description": "Get user statistics including deleted users (admin/moderator only)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/health",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "health"]
+            },
+            "description": "Check API health status"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ]
+}

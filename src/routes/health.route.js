@@ -16,6 +16,7 @@ health.get('/ready', async (req, res) => {
     await sequelize.authenticate();
     res.ok({
       status: 'ready',
+      service: 'Mordecai API',
       database: 'connected',
       timestamp: new Date().toISOString(),
     });
@@ -24,6 +25,7 @@ health.get('/ready', async (req, res) => {
     res.status(503).json({
       success: false,
       status: 'not ready',
+      service: 'Mordecai API',
       database: 'disconnected',
       timestamp: new Date().toISOString(),
     });
@@ -34,6 +36,7 @@ health.get('/ready', async (req, res) => {
 health.get('/live', async (req, res) => {
   res.ok({
     status: 'alive',
+    service: 'Mordecai API',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   });

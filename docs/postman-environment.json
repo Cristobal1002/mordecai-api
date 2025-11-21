@@ -1,0 +1,49 @@
+{
+  "id": "mordecai-api-env",
+  "name": "Mordecai API Environment",
+  "values": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:3000",
+      "description": "Base URL for the API",
+      "enabled": true
+    },
+    {
+      "key": "API_VERSION",
+      "value": "v1",
+      "description": "API version",
+      "enabled": true
+    },
+    {
+      "key": "ACCESS_TOKEN",
+      "value": "",
+      "description": "JWT access token for authenticated requests",
+      "enabled": true
+    },
+    {
+      "key": "REFRESH_TOKEN",
+      "value": "",
+      "description": "JWT refresh token",
+      "enabled": true
+    },
+    {
+      "key": "GOOGLE_ID_TOKEN",
+      "value": "",
+      "description": "Google ID token for Google sign-in",
+      "enabled": true
+    },
+    {
+      "key": "EMAIL_VERIFICATION_TOKEN",
+      "value": "",
+      "description": "Firebase ID token for email verification",
+      "enabled": true
+    },
+    {
+      "key": "TARGET_FIREBASE_UID",
+      "value": "",
+      "description": "Firebase UID of target user for admin operations",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}

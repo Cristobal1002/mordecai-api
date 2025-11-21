@@ -3,6 +3,7 @@ import { config } from './config/index.js';
 import { logger } from './utils/logger.js';
 import { loadExpress } from './loaders/express.load.js';
 import { loadDatabase } from './loaders/sequelize.load.js';
+import { initializeFirebase } from './config/firebase.js';
 
 let server;
 
@@ -10,6 +11,10 @@ export const startServer = async () => {
   const app = express();
 
   try {
+    // Initialize Firebase
+    initializeFirebase();
+    logger.info('Firebase initialized successfully');
+
     // Cargar DB
     await loadDatabase();
 

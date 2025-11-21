@@ -1,0 +1,633 @@
+import { Op } from 'sequelize';
+import { sequelize } from '../models/index.js';
+import { getAuth } from '../config/firebase.js';
+import { User } from '../models/index.js';
+import { AuthenticationError, ValidationError } from '../errors/index.js';
+import { logger } from '../utils/logger.js';
+
+class UserService {
+  /**
+   * Get complete user profile combining PostgreSQL and Firebase data
+   */
+  async getUserProfile(firebaseUid) {
+    try {
+      // Get app-specific data from PostgreSQL
+      const appUser = await User.findOne({ 
+        where: { firebaseUid } 
+      });
+
+      if (!appUser) {
+        throw new AuthenticationError('User not found in application database');
+      }
+
+      // Get profile data from Firebase
+      const firebaseUser = await getAuth().getUser(firebaseUid);
+
+      // Combine data for complete profile
+      return {
+        // App-specific data from PostgreSQL
+        id: appUser.id,
+        firebaseUid: appUser.firebaseUid,
+        appRole: appUser.appRole,
+        isActive: appUser.isActive,
+        lastLoginAt: appUser.lastLoginAt,
+        createdAt: appUser.createdAt,
+        updatedAt: appUser.updatedAt,
+        
+        // Profile data from Firebase
+        email: firebaseUser.email,
+        displayName: firebaseUser.displayName,
+        photoURL: firebaseUser.photoURL,
+        emailVerified: firebaseUser.emailVerified,
+        providerData: firebaseUser.providerData,
+        metadata: {
+          creationTime: firebaseUser.metadata.creationTime,
+          lastSignInTime: firebaseUser.metadata.lastSignInTime,
+        },
+      };
+    } catch (error) {
+      logger.error({ error, firebaseUid }, 'Error getting user profile');
+      throw error;
+    }
+  }
+
+  /**
+   * Create minimal user record in PostgreSQL
+   */
+  async createAppUser(firebaseUid, options = {}) {
+    try {
+      const user = await User.create({
+        firebaseUid,
+        appRole: options.appRole || 'user',
+        isActive: options.isActive !== undefined ? options.isActive : true,
+        lastLoginAt: new Date(),
+      });
+
+      logger.info({ userId: user.id, firebaseUid }, 'App user created');
+      return user;
+    } catch (error) {
+      logger.error({ error, firebaseUid }, 'Error creating app user');
+      throw error;
+    }
+  }
+
+  // Remove preferences method if not using preferences
+  // /**
+  //  * Update user preferences
+  //  */
+  // async updateUserPreferences(firebaseUid, preferences) {
+  //   try {
+  //     const user = await User.findOne({ where: { firebaseUid } });
+      
+  //     if (!user) {
+  //       throw new AuthenticationError('User not found');
+  //     }
+
+  //     await user.updatePreferences(preferences);
+      
+  //     logger.info({ userId: user.id, preferences }, 'User preferences updated');
+  //     return user;
+  //   } catch (error) {
+  //     logger.error({ error, firebaseUid }, 'Error updating user preferences');
+  //     throw error;
+  //   }
+  // }
+
+  /**
+   * Update user app role (admin function)
+   */
+  async updateUserRole(firebaseUid, newAppRole, adminFirebaseUid) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || admin.appRole !== 'admin') {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      const user = await User.findOne({ where: { firebaseUid } });
+      if (!user) {
+        throw new AuthenticationError('User not found');
+      }
+
+      await user.update({ appRole: newAppRole });
+      
+      logger.info(
+        { userId: user.id, newAppRole, adminId: admin.id }, 
+        'User app role updated'
+      );
+      
+      return user;
+    } catch (error) {
+      logger.error({ error, firebaseUid, newAppRole }, 'Error updating user app role');
+      throw error;
+    }
+  }
+
+  /**
+   * Deactivate user account
+   */
+  async deactivateUser(firebaseUid, adminFirebaseUid) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || !['admin', 'moderator'].includes(admin.appRole)) {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      const user = await User.findOne({ where: { firebaseUid } });
+      if (!user) {
+        throw new AuthenticationError('User not found');
+      }
+
+      // Deactivate in PostgreSQL
+      await user.update({ isActive: false });
+
+      // Disable in Firebase
+      await getAuth().updateUser(firebaseUid, { disabled: true });
+      
+      logger.info(
+        { userId: user.id, adminId: admin.id }, 
+        'User account deactivated'
+      );
+      
+      return user;
+    } catch (error) {
+      logger.error({ error, firebaseUid }, 'Error deactivating user');
+      throw error;
+    }
+  }
+
+  /**
+   * Get users list with advanced filtering and search (admin/moderator function)
+   */
+  async getUsersList(adminFirebaseUid, options = {}) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || !['admin', 'moderator'].includes(admin.appRole)) {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      const { 
+        page = 1, 
+        limit = 20, 
+        appRole, 
+        isActive, 
+        search,
+        sortBy = 'createdAt',
+        sortOrder = 'DESC',
+        includeDeleted = false,
+        dateFrom,
+        dateTo
+      } = options;
+
+      const offset = (page - 1) * limit;
+      const whereClause = {};
+      
+      // Build where clause for filters
+      if (appRole) whereClause.appRole = appRole;
+      if (isActive !== undefined) whereClause.isActive = isActive;
+      
+      // Date range filter
+      if (dateFrom || dateTo) {
+        whereClause.createdAt = {};
+        if (dateFrom) whereClause.createdAt[Op.gte] = new Date(dateFrom);
+        if (dateTo) whereClause.createdAt[Op.lte] = new Date(dateTo);
+      }
+
+      // Search functionality (will search in Firebase data later)
+      const searchTerm = search ? search.toLowerCase().trim() : null;
+
+      // Validate sort options
+      const validSortFields = ['createdAt', 'updatedAt', 'lastLoginAt', 'appRole'];
+      const validSortOrders = ['ASC', 'DESC'];
+      
+      const finalSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
+      const finalSortOrder = validSortOrders.includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
+
+      const queryOptions = {
+        where: whereClause,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        order: [[finalSortBy, finalSortOrder]],
+        paranoid: !includeDeleted, // Include soft deleted if requested
+      };
+
+      const { rows: users, count } = await User.findAndCountAll(queryOptions);
+
+      // Get Firebase data and apply search filter
+      let usersWithFirebaseData = await Promise.all(
+        users.map(async (user) => {
+          try {
+            const firebaseUser = await getAuth().getUser(user.firebaseUid);
+            return {
+              ...user.toJSON(),
+              email: firebaseUser.email,
+              displayName: user.displayName || firebaseUser.displayName, // Prioritize PostgreSQL displayName
+              emailVerified: firebaseUser.emailVerified,
+              photoURL: firebaseUser.photoURL,
+              disabled: firebaseUser.disabled,
+              metadata: {
+                creationTime: firebaseUser.metadata.creationTime,
+                lastSignInTime: firebaseUser.metadata.lastSignInTime,
+              },
+            };
+          } catch (error) {
+            // If Firebase user not found, return app data only
+            logger.warn({ firebaseUid: user.firebaseUid }, 'Firebase user not found');
+            return {
+              ...user.toJSON(),
+              email: null,
+              displayName: user.displayName || null, // Use PostgreSQL displayName as fallback
+              emailVerified: false,
+              photoURL: null,
+              disabled: true,
+              metadata: null,
+            };
+          }
+        })
+      );
+
+      // Apply search filter on Firebase data
+      if (searchTerm) {
+        usersWithFirebaseData = usersWithFirebaseData.filter(user => {
+          const searchableText = [
+            user.email,
+            user.displayName,
+            user.appRole,
+            user.firebaseUid
+          ].filter(Boolean).join(' ').toLowerCase();
+          
+          return searchableText.includes(searchTerm);
+        });
+      }
+
+      // Recalculate pagination if search was applied
+      const finalCount = searchTerm ? usersWithFirebaseData.length : count;
+      const totalPages = Math.ceil(finalCount / limit);
+
+      return {
+        users: usersWithFirebaseData,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: finalCount,
+          pages: totalPages,
+          hasNext: page < totalPages,
+          hasPrev: page > 1,
+        },
+        filters: {
+          appRole,
+          isActive,
+          search: searchTerm,
+          sortBy: finalSortBy,
+          sortOrder: finalSortOrder,
+          includeDeleted,
+          dateFrom,
+          dateTo,
+        },
+        summary: {
+          totalUsers: finalCount,
+          currentPage: parseInt(page),
+          resultsPerPage: usersWithFirebaseData.length,
+        }
+      };
+    } catch (error) {
+      logger.error({ error, adminFirebaseUid, options }, 'Error getting users list');
+      throw error;
+    }
+  }
+
+  /**
+   * Get users summary/overview (optimized for dashboard)
+   */
+  async getUsersOverview(adminFirebaseUid) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || !['admin', 'moderator'].includes(admin.appRole)) {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      // Get counts by role and status (optimized single queries)
+      const [
+        roleStats,
+        statusStats,
+        recentUsers,
+        topUsers
+      ] = await Promise.all([
+        // Count by role
+        User.findAll({
+          attributes: [
+            'appRole',
+            [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+          ],
+          group: ['appRole'],
+          raw: true
+        }),
+        
+        // Count by status
+        User.findAll({
+          attributes: [
+            'isActive',
+            [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+          ],
+          group: ['isActive'],
+          raw: true
+        }),
+        
+        // Recent users (last 7 days)
+        User.findAll({
+          where: {
+            createdAt: {
+              [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+            }
+          },
+          order: [['createdAt', 'DESC']],
+          limit: 10,
+        }),
+        
+        // Most active users (by last login)
+        User.findAll({
+          where: {
+            lastLoginAt: { [Op.ne]: null }
+          },
+          order: [['lastLoginAt', 'DESC']],
+          limit: 10,
+        })
+      ]);
+
+      // Format role statistics
+      const roleDistribution = roleStats.reduce((acc, stat) => {
+        acc[stat.appRole] = parseInt(stat.count);
+        return acc;
+      }, {});
+
+      // Format status statistics
+      const statusDistribution = statusStats.reduce((acc, stat) => {
+        acc[stat.isActive ? 'active' : 'inactive'] = parseInt(stat.count);
+        return acc;
+      }, {});
+
+      return {
+        overview: {
+          totalUsers: Object.values(roleDistribution).reduce((sum, count) => sum + count, 0),
+          activeUsers: statusDistribution.active || 0,
+          inactiveUsers: statusDistribution.inactive || 0,
+          recentSignups: recentUsers.length,
+        },
+        roleDistribution,
+        statusDistribution,
+        recentUsers: recentUsers.map(user => ({
+          id: user.id,
+          firebaseUid: user.firebaseUid,
+          appRole: user.appRole,
+          isActive: user.isActive,
+          createdAt: user.createdAt,
+        })),
+        activeUsers: topUsers.map(user => ({
+          id: user.id,
+          firebaseUid: user.firebaseUid,
+          appRole: user.appRole,
+          lastLoginAt: user.lastLoginAt,
+        })),
+      };
+    } catch (error) {
+      logger.error({ error, adminFirebaseUid }, 'Error getting users overview');
+      throw error;
+    }
+  }
+
+  /**
+   * Soft delete user (admin function)
+   */
+  async deleteUser(firebaseUid, adminFirebaseUid) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || admin.appRole !== 'admin') {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      const user = await User.findOne({ where: { firebaseUid } });
+      if (!user) {
+        throw new AuthenticationError('User not found');
+      }
+
+      // Disable user in Firebase (don't delete completely)
+      await getAuth().updateUser(firebaseUid, { disabled: true });
+
+      // Soft delete from PostgreSQL
+      await user.softDelete();
+      
+      logger.info(
+        { userId: user.id, adminId: admin.id }, 
+        'User soft deleted'
+      );
+      
+      return { message: 'User deleted successfully' };
+    } catch (error) {
+      logger.error({ error, firebaseUid }, 'Error deleting user');
+      throw error;
+    }
+  }
+
+  /**
+   * Permanently delete user (super admin function)
+   */
+  async permanentlyDeleteUser(firebaseUid, adminFirebaseUid) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || admin.appRole !== 'admin') {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      // Find user including soft deleted ones
+      const user = await User.findOne({ 
+        where: { firebaseUid },
+        paranoid: false 
+      });
+      
+      if (!user) {
+        throw new AuthenticationError('User not found');
+      }
+
+      // Delete from Firebase completely
+      await getAuth().deleteUser(firebaseUid);
+
+      // Permanently delete from PostgreSQL
+      await user.destroy({ force: true });
+      
+      logger.warn(
+        { userId: user.id, adminId: admin.id }, 
+        'User permanently deleted'
+      );
+      
+      return { message: 'User permanently deleted' };
+    } catch (error) {
+      logger.error({ error, firebaseUid }, 'Error permanently deleting user');
+      throw error;
+    }
+  }
+
+  /**
+   * Restore soft deleted user (admin function)
+   */
+  async restoreUser(firebaseUid, adminFirebaseUid) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || admin.appRole !== 'admin') {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      // Find soft deleted user
+      const user = await User.findOne({ 
+        where: { firebaseUid },
+        paranoid: false 
+      });
+      
+      if (!user) {
+        throw new AuthenticationError('User not found');
+      }
+
+      if (!user.isDeleted()) {
+        throw new ValidationError('User is not deleted');
+      }
+
+      // Re-enable user in Firebase
+      await getAuth().updateUser(firebaseUid, { disabled: false });
+
+      // Restore user in PostgreSQL
+      await user.restore();
+      
+      logger.info(
+        { userId: user.id, adminId: admin.id }, 
+        'User restored'
+      );
+      
+      return { message: 'User restored successfully', user };
+    } catch (error) {
+      logger.error({ error, firebaseUid }, 'Error restoring user');
+      throw error;
+    }
+  }
+
+  /**
+   * Get user statistics (admin function)
+   */
+  async getUserStats(adminFirebaseUid) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || !['admin', 'moderator'].includes(admin.appRole)) {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      const [
+        totalUsers,
+        activeUsers,
+        inactiveUsers,
+        adminUsers,
+        recentUsers,
+        deletedUsers,
+        totalWithDeleted,
+      ] = await Promise.all([
+        User.count(), // Only non-deleted users
+        User.count({ where: { isActive: true } }),
+        User.count({ where: { isActive: false } }),
+        User.count({ where: { appRole: 'admin' } }),
+        User.count({
+          where: {
+            createdAt: {
+              [Op.gte]: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Last 30 days
+            },
+          },
+        }),
+        User.countOnlyDeleted(), // Only soft deleted users
+        User.countWithDeleted(), // All users including deleted
+      ]);
+
+      return {
+        totalUsers,
+        activeUsers,
+        inactiveUsers,
+        adminUsers,
+        recentUsers,
+        deletedUsers,
+        totalWithDeleted,
+        inactivePercentage: totalUsers > 0 ? Math.round((inactiveUsers / totalUsers) * 100) : 0,
+        deletedPercentage: totalWithDeleted > 0 ? Math.round((deletedUsers / totalWithDeleted) * 100) : 0,
+      };
+    } catch (error) {
+      logger.error({ error, adminFirebaseUid }, 'Error getting user stats');
+      throw error;
+    }
+  }
+
+  /**
+   * Get deleted users list (admin function)
+   */
+  async getDeletedUsersList(adminFirebaseUid, options = {}) {
+    try {
+      // Verify admin permissions
+      const admin = await User.findOne({ where: { firebaseUid: adminFirebaseUid } });
+      if (!admin || admin.appRole !== 'admin') {
+        throw new AuthenticationError('Insufficient permissions');
+      }
+
+      const { page = 1, limit = 20 } = options;
+      const offset = (page - 1) * limit;
+
+      const { rows: users, count } = await User.findAndCountAll({
+        where: {},
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        order: [['deletedAt', 'DESC']],
+        paranoid: false, // Include soft deleted
+        where: {
+          deletedAt: { [Op.ne]: null }
+        }
+      });
+
+      // Get basic Firebase data for deleted users (if still exists)
+      const usersWithFirebaseData = await Promise.all(
+        users.map(async (user) => {
+          try {
+            const firebaseUser = await getAuth().getUser(user.firebaseUid);
+            return {
+              ...user.toJSON(),
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName,
+              disabled: firebaseUser.disabled,
+            };
+          } catch (error) {
+            // Firebase user might be deleted
+            return {
+              ...user.toJSON(),
+              email: null,
+              displayName: null,
+              disabled: true,
+            };
+          }
+        })
+      );
+
+      return {
+        users: usersWithFirebaseData,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          pages: Math.ceil(count / limit),
+        },
+      };
+    } catch (error) {
+      logger.error({ error, adminFirebaseUid }, 'Error getting deleted users list');
+      throw error;
+    }
+  }
+}
+
+export const userService = new UserService();
