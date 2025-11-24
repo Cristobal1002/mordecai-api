@@ -44,7 +44,7 @@ const getCallerInfo = () => {
     //file: relativePath || callerfile,
     //line: callersite ? callersite.getLineNumber() : undefined,
     //column: callersite ? callersite.getColumnNumber() : undefined,,
-     line: `${callerfile}:${callersite.getLineNumber()}}`
+     // line: `${callerfile}:${callersite.getLineNumber()}}`
   };
 };
 
