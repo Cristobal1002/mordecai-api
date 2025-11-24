@@ -260,6 +260,19 @@ router.put('/:tenantSlug/members/:userFirebaseUid/role',
 );
 
 // =============================================================================
+// ROLES ROUTES
+// =============================================================================
+
+/**
+ * @route   GET /api/v1/organizations/:tenantSlug/roles
+ * @desc    Get available organization roles
+ * @access  Private (Organization members)
+ */
+router.get('/:tenantSlug/roles',
+  organizationController.getAvailableRoles
+);
+
+// =============================================================================
 // SETTINGS ROUTES
 // =============================================================================
 

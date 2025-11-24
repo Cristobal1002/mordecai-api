@@ -750,6 +750,24 @@
             },
             "description": "Get organization hierarchy with parent and sub-organizations"
           }
+        },
+        {
+          "name": "Get Available Organization Roles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/org/{{TENANT_SLUG}}/roles",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "org", "{{TENANT_SLUG}}", "roles"]
+            },
+            "description": "Get list of available organization roles with descriptions and default permissions (organization members only)"
+          }
         }
       ]
     },

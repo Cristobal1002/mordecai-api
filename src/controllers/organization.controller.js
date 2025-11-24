@@ -385,6 +385,100 @@ class OrganizationController {
       next(error);
     }
   }
+  
+  /**
+   * Get available organization roles
+   * GET /api/v1/organizations/:tenantSlug/roles
+   */
+  async getAvailableRoles(req, res, next) {
+    try {
+      // Define available roles with descriptions
+      const roles = [
+        {
+          value: 'owner',
+          label: 'Owner',
+          description: 'Organization owner with full control',
+          permissions: {
+            users: { read: true, write: true, delete: true, invite: true },
+            organizations: { read: true, write: true, delete: true, settings: true },
+            reports: { read: true, write: true, export: true },
+            billing: { read: true, write: true },
+            api: { read: true, write: true }
+          }
+        },
+        {
+          value: 'admin',
+          label: 'Administrator',
+          description: 'Administrator with almost full control',
+          permissions: {
+            users: { read: true, write: true, delete: true, invite: true },
+            organizations: { read: true, write: true, delete: false, settings: true },
+            reports: { read: true, write: true, export: true },
+            billing: { read: true, write: false },
+            api: { read: true, write: true }
+          }
+        },
+        {
+          value: 'manager',
+          label: 'Manager',
+          description: 'Manager with user management and some settings access',
+          permissions: {
+            users: { read: true, write: true, delete: false, invite: true },
+            organizations: { read: true, write: false, delete: false, settings: false },
+            reports: { read: true, write: true, export: false },
+            billing: { read: false, write: false },
+            api: { read: true, write: false }
+          }
+        },
+        {
+          value: 'employee',
+          label: 'Employee',
+          description: 'Regular employee with basic access',
+          permissions: {
+            users: { read: true, write: false, delete: false, invite: false },
+            organizations: { read: true, write: false, delete: false, settings: false },
+            reports: { read: true, write: false, export: false },
+            billing: { read: false, write: false },
+            api: { read: false, write: false }
+          }
+        },
+        {
+          value: 'viewer',
+          label: 'Viewer',
+          description: 'Read-only access to organization resources',
+          permissions: {
+            users: { read: true, write: false, delete: false, invite: false },
+            organizations: { read: true, write: false, delete: false, settings: false },
+            reports: { read: true, write: false, export: false },
+            billing: { read: false, write: false },
+            api: { read: false, write: false }
+          }
+        },
+        {
+          value: 'guest',
+          label: 'Guest',
+          description: 'Limited temporary access with minimal permissions',
+          permissions: {
+            users: { read: false, write: false, delete: false, invite: false },
+            organizations: { read: true, write: false, delete: false, settings: false },
+            reports: { read: false, write: false, export: false },
+            billing: { read: false, write: false },
+            api: { read: false, write: false }
+          }
+        }
+      ];
+      
+      res.success({
+        message: 'Organization roles retrieved successfully',
+        data: {
+          roles
+        }
+      });
+      
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const organizationController = new OrganizationController();
