@@ -1,8 +1,9 @@
 import { Op } from 'sequelize';
-import { sequelize, User, Organization, OrganizationUser } from '../models/index.js';
+import { sequelize, User, Organization, OrganizationUser, OrganizationInvitation } from '../models/index.js';
 import { AuthenticationError, ValidationError, ConflictError } from '../errors/index.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
+import { generateInvitationLink } from '../config/firebase.js';
 
 class OrganizationService {
   
@@ -13,7 +14,7 @@ class OrganizationService {
     const transaction = await sequelize.transaction();
     
     try {
-      const { name, slug, description, parentId, settings = {}, contactInfo = {} } = organizationData;
+      const { name, slug, identificacionFisica, parentId, telefono, direccion, primaryColor, secondaryColor, logoUrl } = organizationData;
       
       // Validate creator exists and is active
       const creator = await User.findByPk(creatorUserId, { transaction });
@@ -59,16 +60,15 @@ class OrganizationService {
       const organization = await Organization.create({
         name,
         slug,
-        description,
+        identificacionFisica,
         parentId,
-        settings: {
-          ...Organization.rawAttributes.settings.defaultValue,
-          ...settings
-        },
-        contactInfo,
+        telefono,
+        direccion,
+        primaryColor: primaryColor || '#007bff',
+        secondaryColor,
+        logoUrl,
         isActive: true,
         planType: 'free',
-        foundedAt: new Date(),
       }, { transaction });
       
       // Make creator the owner of the organization
@@ -123,13 +123,13 @@ class OrganizationService {
             as: 'ParentOrganization',
             attributes: ['id', 'name', 'slug']
           },
-          {
-            model: Organization,
-            as: 'SubOrganizations',
-            where: { isActive: true },
-            required: false,
-            attributes: ['id', 'name', 'slug', 'description']
-          }
+            {
+              model: Organization,
+              as: 'SubOrganizations',
+              where: { isActive: true },
+              required: false,
+              attributes: ['id', 'name', 'slug']
+            }
         ]
       });
       
@@ -172,7 +172,7 @@ class OrganizationService {
       }
       
       // Update allowed fields
-      const allowedFields = ['name', 'description', 'settings', 'contactInfo'];
+      const allowedFields = ['name', 'identificacionFisica', 'telefono', 'direccion', 'primaryColor', 'secondaryColor', 'logoUrl'];
       const updateFields = {};
       
       allowedFields.forEach(field => {
@@ -180,14 +180,6 @@ class OrganizationService {
           updateFields[field] = updateData[field];
         }
       });
-      
-      // Special handling for settings (merge with existing)
-      if (updateData.settings) {
-        updateFields.settings = {
-          ...organization.settings,
-          ...updateData.settings
-        };
-      }
       
       await organization.update(updateFields, { transaction });
       await transaction.commit();
@@ -345,13 +337,22 @@ class OrganizationService {
   }
   
   /**
-   * Invite user to organization
+   * Invite user to organization (existing user or new user via email)
    */
   async inviteUserToOrganization(organizationId, inviteData, inviterUserId) {
     const transaction = await sequelize.transaction();
     
     try {
-      const { userFirebaseUid, role = 'employee', permissions = {}, department, jobTitle } = inviteData;
+      const { userFirebaseUid, email, role = 'employee', permissions = {}, department, jobTitle } = inviteData;
+      
+      // Validate input: must provide either userFirebaseUid or email
+      if (!userFirebaseUid && !email) {
+        throw new ValidationError('Either userFirebaseUid or email is required');
+      }
+      
+      if (userFirebaseUid && email) {
+        throw new ValidationError('Provide either userFirebaseUid or email, not both');
+      }
       
       // Check inviter permissions
       const canInvite = await this.userCanInviteToOrganization(inviterUserId, organizationId, transaction);
@@ -359,76 +360,148 @@ class OrganizationService {
         throw new AuthenticationError('Insufficient permissions to invite users');
       }
       
-      // Find the user to invite
-      const userToInvite = await User.findOne({
-        where: { firebaseUid: userFirebaseUid, isActive: true },
-        transaction
-      });
-      
-      if (!userToInvite) {
-        throw new ValidationError('User not found or inactive');
+      // Get organization and inviter info
+      const organization = await Organization.findByPk(organizationId, { transaction });
+      if (!organization) {
+        throw new ValidationError('Organization not found');
       }
       
-      // Check if user is already a member
-      const existingMembership = await OrganizationUser.findOne({
-        where: {
+      const inviter = await User.findByPk(inviterUserId, { transaction });
+      if (!inviter) {
+        throw new AuthenticationError('Inviter not found');
+      }
+      
+      // CASE 1: Invite existing user (by firebaseUid)
+      if (userFirebaseUid) {
+        // Find the user to invite
+        const userToInvite = await User.findOne({
+          where: { firebaseUid: userFirebaseUid, isActive: true },
+          transaction
+        });
+        
+        if (!userToInvite) {
+          throw new ValidationError('User not found or inactive');
+        }
+        
+        // Check if user is already a member
+        const existingMembership = await OrganizationUser.findOne({
+          where: {
+            userId: userToInvite.id,
+            organizationId,
+          },
+          paranoid: false, // Include soft-deleted
+          transaction
+        });
+        
+        if (existingMembership) {
+          if (existingMembership.isActive) {
+            throw new ConflictError('User is already a member of this organization');
+          } else {
+            // Reactivate soft-deleted membership
+            await existingMembership.update({
+              role,
+              permissions: {
+                ...OrganizationUser.getRolePermissions(role),
+                ...permissions
+              },
+              isActive: true,
+              invitedBy: inviterUserId,
+              invitedAt: new Date(),
+              department,
+              jobTitle
+            }, { transaction });
+            
+            await transaction.commit();
+            return existingMembership;
+          }
+        }
+        
+        // Create new membership
+        const membership = await OrganizationUser.create({
           userId: userToInvite.id,
           organizationId,
-        },
-        paranoid: false, // Include soft-deleted
-        transaction
-      });
-      
-      if (existingMembership) {
-        if (existingMembership.isActive) {
-          throw new ConflictError('User is already a member of this organization');
-        } else {
-          // Reactivate soft-deleted membership
-          await existingMembership.update({
-            role,
-            permissions: {
-              ...OrganizationUser.getRolePermissions(role),
-              ...permissions
-            },
-            isActive: true,
-            invitedBy: inviterUserId,
-            invitedAt: new Date(),
-            department,
-            jobTitle
-          }, { transaction });
-          
-          await transaction.commit();
-          return existingMembership;
-        }
+          role,
+          permissions: {
+            ...OrganizationUser.getRolePermissions(role),
+            ...permissions
+          },
+          isActive: true,
+          invitedBy: inviterUserId,
+          invitedAt: new Date(),
+          joinedAt: new Date(),
+          department,
+          jobTitle
+        }, { transaction });
+        
+        await transaction.commit();
+        
+        logger.info({
+          organizationId,
+          invitedUserId: userToInvite.id,
+          inviterUserId,
+          role
+        }, 'User invited to organization successfully');
+        
+        return membership;
       }
       
-      // Create new membership
-      const membership = await OrganizationUser.create({
-        userId: userToInvite.id,
-        organizationId,
-        role,
-        permissions: {
-          ...OrganizationUser.getRolePermissions(role),
-          ...permissions
-        },
-        isActive: true,
-        invitedBy: inviterUserId,
-        invitedAt: new Date(),
-        joinedAt: new Date(),
-        department,
-        jobTitle
-      }, { transaction });
-      
-      await transaction.commit();
-      
-      logger.info({
-        organizationId,
-        invitedUserId: userToInvite.id,
-        inviterUserId,
-        role
-      }, 'User invited to organization successfully');
-      
-      return membership;
+      // CASE 2: Invite new user (by email)
+      if (email) {
+        // Verify OrganizationInvitation model is available (multi-tenant enabled)
+        if (!OrganizationInvitation) {
+          throw new ValidationError('Email invitations require multi-tenant feature to be enabled');
+        }
+        
+        // Normalize email
+        const normalizedEmail = email.toLowerCase().trim();
+        
+        // Check if user already exists with this email
+        // Note: We'd need to get email from Firebase, but for now we'll check invitations
+        // Check if there's already a pending invitation for this email and organization
+        const existingInvitation = await OrganizationInvitation.findValidByEmail(normalizedEmail, organizationId);
+        if (existingInvitation) {
+          throw new ConflictError('An active invitation already exists for this email');
+        }
+        
+        // Check if email already belongs to an existing user (we can't easily check this without Firebase lookup)
+        // This will be handled when the user tries to register with the invitation token
+        
+        // Generate invitation token
+        const invitationToken = OrganizationInvitation.generateToken();
+        
+        // Generate Firebase invitation link
+        const { actionCode, invitationLink } = await generateInvitationLink(
+          normalizedEmail,
+          invitationToken
+        );
+        
+        // Create invitation record
+        const invitation = await OrganizationInvitation.create({
+          email: normalizedEmail,
+          invitationToken,
+          organizationId,
+          invitedBy: inviterUserId,
+          role,
+          firebaseActionCode: actionCode,
+          status: 'pending',
+        }, { transaction });
+        
+        await transaction.commit();
+        
+        logger.info({
+          organizationId,
+          email: normalizedEmail,
+          invitationId: invitation.id,
+          inviterUserId,
+          role
+        }, 'Email invitation created successfully');
+        
+        return {
+          invitation,
+          invitationLink, // Return link for sending via email service
+          type: 'email_invitation'
+        };
+      }
       
     } catch (error) {
       await transaction.rollback();

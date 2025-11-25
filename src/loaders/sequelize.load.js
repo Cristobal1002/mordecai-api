@@ -85,6 +85,16 @@ async function syncModelsGradually(syncOptions) {
         required: false,
         enabled: config.features.multiTenant && config.dbSync.organizationUsers,
         description: 'Organization memberships table (many-to-many users <-> organizations)'
+      },
+      
+      // 4. ORGANIZATION-INVITATIONS TABLE: Only if multi-tenant is enabled (depends on users + organizations)
+      {
+        model: models.OrganizationInvitation,
+        tableName: 'organization_invitations',
+        syncOptions: { ...syncOptions, force: false }, // Never force on new tables
+        required: false,
+        enabled: config.features.multiTenant && config.dbSync.organizationInvitations,
+        description: 'Organization invitations table (pending email invitations for new users)'
       }
     ];
     
@@ -191,6 +201,39 @@ async function setupModelAssociations() {
       logger.info('✅ Model associations established');
     } else {
       logger.info('⏭️  Skipping associations - not all models available');
+    }
+    
+    // Setup OrganizationInvitation associations if model exists
+    if (models.OrganizationInvitation) {
+      // OrganizationInvitation belongs to Organization
+      models.OrganizationInvitation.belongsTo(models.Organization, {
+        foreignKey: 'organizationId',
+        as: 'Organization'
+      });
+      
+      // OrganizationInvitation belongs to User (invited by)
+      models.OrganizationInvitation.belongsTo(models.User, {
+        foreignKey: 'invitedBy',
+        as: 'Inviter'
+      });
+      
+      // Organization has many invitations
+      if (models.Organization) {
+        models.Organization.hasMany(models.OrganizationInvitation, {
+          foreignKey: 'organizationId',
+          as: 'Invitations'
+        });
+      }
+      
+      // User has many sent invitations
+      if (models.User) {
+        models.User.hasMany(models.OrganizationInvitation, {
+          foreignKey: 'invitedBy',
+          as: 'SentInvitations'
+        });
+      }
+      
+      logger.info('✅ OrganizationInvitation associations established');
     }
     
   } catch (error) {

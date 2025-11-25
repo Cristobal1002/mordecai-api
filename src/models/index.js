@@ -2,6 +2,7 @@ import { sequelize } from '../config/database.js';
 import { defineUserModel } from './user.model.js';
 import { defineOrganizationModel } from './organization.model.js';
 import { defineOrganizationUserModel } from './organization-user.model.js';
+import { defineOrganizationInvitationModel } from './organization-invitation.model.js';
 import { config } from '../config/index.js';
 
 // Initialize core models (always available)
@@ -10,13 +11,15 @@ export const User = defineUserModel(sequelize);
 // Initialize multi-tenant models (only if feature is enabled)
 let Organization = null;
 let OrganizationUser = null;
+let OrganizationInvitation = null;
 
 if (config.features.multiTenant) {
   Organization = defineOrganizationModel(sequelize);
   OrganizationUser = defineOrganizationUserModel(sequelize);
+  OrganizationInvitation = defineOrganizationInvitationModel(sequelize);
 }
 
-export { Organization, OrganizationUser, sequelize };
+export { Organization, OrganizationUser, OrganizationInvitation, sequelize };
 
 /**
  * Inicializa todos los modelos de Sequelize y sus relaciones
@@ -36,6 +39,7 @@ export const initModels = (sequelize) => {
   // Multi-tenant models (when ENABLE_MULTI_TENANT=true):
   // - Organization: company/tenant data with hierarchy support
   // - OrganizationUser: user memberships with roles and permissions per organization
+  // - OrganizationInvitation: pending email invitations for new users
   
   // The models will be registered with Sequelize during the sync process
   // Associations are setup after table creation in the database loader

@@ -21,10 +21,13 @@ class OrganizationController {
             id: organization.id,
             name: organization.name,
             slug: organization.slug,
-            description: organization.description,
+            identificacionFisica: organization.identificacionFisica,
             parentId: organization.parentId,
-            settings: organization.settings,
-            contactInfo: organization.contactInfo,
+            telefono: organization.telefono,
+            direccion: organization.direccion,
+            primaryColor: organization.primaryColor,
+            secondaryColor: organization.secondaryColor,
+            logoUrl: organization.logoUrl,
             isActive: organization.isActive,
             planType: organization.planType,
             createdAt: organization.createdAt,
@@ -78,13 +81,15 @@ class OrganizationController {
             id: organization.id,
             name: organization.name,
             slug: organization.slug,
-            description: organization.description,
+            identificacionFisica: organization.identificacionFisica,
             parentId: organization.parentId,
-            settings: organization.settings,
-            contactInfo: organization.contactInfo,
+            telefono: organization.telefono,
+            direccion: organization.direccion,
+            primaryColor: organization.primaryColor,
+            secondaryColor: organization.secondaryColor,
+            logoUrl: organization.logoUrl,
             isActive: organization.isActive,
             planType: organization.planType,
-            foundedAt: organization.foundedAt,
             createdAt: organization.createdAt,
             updatedAt: organization.updatedAt,
           },
@@ -123,9 +128,12 @@ class OrganizationController {
             id: organization.id,
             name: organization.name,
             slug: organization.slug,
-            description: organization.description,
-            settings: organization.settings,
-            contactInfo: organization.contactInfo,
+            identificacionFisica: organization.identificacionFisica,
+            telefono: organization.telefono,
+            direccion: organization.direccion,
+            primaryColor: organization.primaryColor,
+            secondaryColor: organization.secondaryColor,
+            logoUrl: organization.logoUrl,
             updatedAt: organization.updatedAt,
           }
         }
@@ -195,24 +203,49 @@ class OrganizationController {
       const inviteData = req.body;
       const inviterUserId = req.user.id;
       
-      const membership = await organizationService.inviteUserToOrganization(
+      const result = await organizationService.inviteUserToOrganization(
         organizationId, 
         inviteData, 
         inviterUserId
       );
       
+      // Handle email invitation (new user)
+      if (result.type === 'email_invitation') {
+        const { invitation, invitationLink } = result;
+        
+        res.success({
+          message: 'Email invitation sent successfully',
+          data: {
+            invitation: {
+              id: invitation.id,
+              email: invitation.email,
+              role: invitation.role,
+              status: invitation.status,
+              expiresAt: invitation.expiresAt,
+              invitedAt: invitation.invitedAt,
+            },
+            // Note: In production, invitationLink should be sent via email service
+            // and not exposed in the API response
+            invitationLink: invitationLink
+          }
+        }, 201);
+        
+        return;
+      }
+      
+      // Handle existing user invitation
       res.success({
         message: 'User invited to organization successfully',
         data: {
           membership: {
-            id: membership.id,
-            role: membership.role,
-            permissions: membership.permissions,
-            isActive: membership.isActive,
-            invitedAt: membership.invitedAt,
-            joinedAt: membership.joinedAt,
-            department: membership.department,
-            jobTitle: membership.jobTitle,
+            id: result.id,
+            role: result.role,
+            permissions: result.permissions,
+            isActive: result.isActive,
+            invitedAt: result.invitedAt,
+            joinedAt: result.joinedAt,
+            department: result.department,
+            jobTitle: result.jobTitle,
           }
         }
       }, 201);
@@ -295,7 +328,9 @@ class OrganizationController {
           name: organization.name,
           slug: organization.slug,
           planType: organization.planType,
-          settings: organization.settings,
+          primaryColor: organization.primaryColor,
+          secondaryColor: organization.secondaryColor,
+          logoUrl: organization.logoUrl,
         },
         user: {
           role: membership?.role,
@@ -344,8 +379,12 @@ class OrganizationController {
       res.success({
         message: 'Organization settings retrieved successfully',
         data: {
-          settings: organization.settings,
-          contactInfo: organization.contactInfo,
+          identificacionFisica: organization.identificacionFisica,
+          telefono: organization.telefono,
+          direccion: organization.direccion,
+          primaryColor: organization.primaryColor,
+          secondaryColor: organization.secondaryColor,
+          logoUrl: organization.logoUrl,
           planType: organization.planType,
           isActive: organization.isActive,
         }
@@ -363,20 +402,28 @@ class OrganizationController {
   async updateSettings(req, res, next) {
     try {
       const organizationId = req.tenant.id;
-      const { settings, contactInfo } = req.body;
+      const { identificacionFisica, telefono, direccion, primaryColor, secondaryColor, logoUrl } = req.body;
       const userId = req.user.id;
       
       const updateData = {};
-      if (settings) updateData.settings = settings;
-      if (contactInfo) updateData.contactInfo = contactInfo;
+      if (identificacionFisica !== undefined) updateData.identificacionFisica = identificacionFisica;
+      if (telefono !== undefined) updateData.telefono = telefono;
+      if (direccion !== undefined) updateData.direccion = direccion;
+      if (primaryColor !== undefined) updateData.primaryColor = primaryColor;
+      if (secondaryColor !== undefined) updateData.secondaryColor = secondaryColor;
+      if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
       
       const organization = await organizationService.updateOrganization(organizationId, updateData, userId);
       
       res.success({
         message: 'Organization settings updated successfully',
         data: {
-          settings: organization.settings,
-          contactInfo: organization.contactInfo,
+          identificacionFisica: organization.identificacionFisica,
+          telefono: organization.telefono,
+          direccion: organization.direccion,
+          primaryColor: organization.primaryColor,
+          secondaryColor: organization.secondaryColor,
+          logoUrl: organization.logoUrl,
           updatedAt: organization.updatedAt,
         }
       });

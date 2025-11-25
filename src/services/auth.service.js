@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 import { Op } from 'sequelize';
 import { config } from '../config/index.js';
 import { getAuth, verifyIdToken } from '../config/firebase.js';
-import { User } from '../models/index.js';
+import { User, OrganizationInvitation, OrganizationUser } from '../models/index.js';
 import { logger } from '../utils/logger.js';
 import { 
   AuthenticationError, 
@@ -33,16 +33,44 @@ class AuthService {
   }
 
   async registerWithEmail(userData, organizationSlug = null) {
-    const { email, password, firstName, lastName, displayName } = userData;
+    const { email, password, firstName, lastName, displayName, invitationToken } = userData;
 
     // Use provided displayName or construct from firstName/lastName
     const finalDisplayName = displayName || `${firstName} ${lastName}`;
+
+    // Normalize email
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Process invitation token if provided
+    let invitation = null;
+    if (invitationToken) {
+      // Verify OrganizationInvitation model is available (multi-tenant enabled)
+      if (!OrganizationInvitation) {
+        throw new ValidationError('Invitation processing requires multi-tenant feature to be enabled');
+      }
+      
+      invitation = await OrganizationInvitation.findByToken(invitationToken);
+      
+      if (!invitation) {
+        throw new ValidationError('Invalid or expired invitation token');
+      }
+      
+      // Check if invitation is valid
+      if (!invitation.isValid()) {
+        throw new ValidationError('Invitation has expired or is no longer valid');
+      }
+      
+      // Verify email matches invitation
+      if (invitation.email.toLowerCase() !== normalizedEmail) {
+        throw new ValidationError('Email does not match the invitation');
+      }
+    }
 
     // Create Firebase user first
     let firebaseUser;
     try {
       firebaseUser = await getAuth().createUser({
-        email,
+        email: normalizedEmail,
         password,
         displayName: finalDisplayName,
       });
@@ -62,8 +90,72 @@ class AuthService {
       lastLoginAt: new Date(),
     });
 
-    // If organization slug is provided, add user to organization
-    if (organizationSlug && config.features.multiTenant) {
+    // Process invitation if provided
+    if (invitation) {
+      try {
+        const { Organization } = await import('../models/index.js');
+        
+        if (Organization && OrganizationUser) {
+          const organization = await Organization.findByPk(invitation.organizationId);
+          
+          if (!organization || !organization.isActive) {
+            throw new ValidationError('Organization from invitation is not available');
+          }
+          
+          // Check if user is already a member (shouldn't happen, but safety check)
+          const existingMembership = await OrganizationUser.findOne({
+            where: {
+              userId: user.id,
+              organizationId: organization.id,
+            },
+          });
+          
+          if (existingMembership) {
+            // User already member, just accept invitation
+            await invitation.accept();
+            logger.info({
+              userId: user.id,
+              organizationId: organization.id,
+              invitationId: invitation.id
+            }, 'User already member, invitation accepted');
+          } else {
+            // Create membership from invitation
+            // Use default permissions for the role (no custom permissions stored in invitation)
+            await OrganizationUser.create({
+              userId: user.id,
+              organizationId: organization.id,
+              role: invitation.role,
+              permissions: OrganizationUser.getRolePermissions(invitation.role),
+              isActive: true,
+              invitedBy: invitation.invitedBy,
+              invitedAt: invitation.invitedAt,
+              joinedAt: new Date(),
+            });
+            
+            // Mark invitation as accepted
+            await invitation.accept();
+            
+            logger.info({
+              userId: user.id,
+              organizationId: organization.id,
+              invitationId: invitation.id,
+              role: invitation.role
+            }, 'User registered and added to organization via invitation');
+          }
+        }
+      } catch (error) {
+        // Log error but don't fail registration
+        logger.error({
+          error,
+          userId: user.id,
+          invitationId: invitation?.id
+        }, 'Failed to process invitation during registration');
+        
+        // Optionally, you might want to throw here depending on requirements
+        // throw new ValidationError(`Failed to process invitation: ${error.message}`);
+      }
+    } else if (organizationSlug && config.features.multiTenant) {
+      // Legacy behavior: If organization slug is provided, add user to organization
       try {
         const { Organization, OrganizationUser } = await import('../models/index.js');
         
@@ -108,6 +200,7 @@ class AuthService {
     return {
       user,
       tokens,
+      invitationAccepted: !!invitation,
     };
   }
 

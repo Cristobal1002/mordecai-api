@@ -1,8 +1,8 @@
 {
   "info": {
     "name": "Mordecai API",
-    "description": "Complete Mordecai authentication system with Firebase auth and multi-tenant organization management",
-    "version": "2.0.0",
+    "description": "Complete Mordecai authentication system with Firebase auth and multi-tenant organization management. Includes email invitation system for new users.",
+    "version": "2.1.0",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -21,14 +21,36 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"displayName\": \"John Doe\"\n}"
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"displayName\": \"John Doe\",\n  \"invitationToken\": \"\"\n}"
             },
             "url": {
               "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/register",
               "host": ["{{BASE_URL}}"],
               "path": ["api", "{{API_VERSION}}", "auth", "register"]
             },
-            "description": "Register a new user with email and password"
+            "description": "Register a new user with email and password. Include invitationToken if registering via organization invitation link."
+          }
+        },
+        {
+          "name": "Register with Invitation Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invited@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Smith\",\n  \"invitationToken\": \"{{INVITATION_TOKEN}}\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/auth/register",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "auth", "register"]
+            },
+            "description": "Register a new user using an organization invitation token. The invitationToken comes from the Firebase invitation link query parameter.\n\n**Flow:**\n1. User receives email with invitation link (from Invite New User by Email endpoint)\n2. Link contains invitationToken in URL: /auth/register?invitationToken=xxx\n3. User clicks link and completes registration form\n4. Registration includes the invitationToken\n5. System validates the token and automatically adds user to organization\n\n**Validations:**\n- Email must match the invitation email\n- Invitation must be valid (status='pending', not expired)\n- Invitation expires after 7 days\n\n**Result:**\n- User account created in Firebase and PostgreSQL\n- User automatically added to organization with specified role\n- Invitation marked as accepted\n- User receives access and refresh tokens"
           }
         },
         {
@@ -617,7 +639,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Acme Corporation\",\n  \"slug\": \"acme-corp\",\n  \"description\": \"Leading provider of innovative solutions\",\n  \"settings\": {\n    \"features\": {\n      \"userManagement\": true,\n      \"reporting\": true,\n      \"apiAccess\": false\n    },\n    \"branding\": {\n      \"primaryColor\": \"#007bff\",\n      \"logo\": null\n    }\n  },\n  \"contactInfo\": {\n    \"email\": \"contact@acme-corp.com\",\n    \"phone\": \"+1-555-0123\",\n    \"address\": \"123 Business St, City, State 12345\"\n  }\n}"
+              "raw": "{\n  \"name\": \"Acme Corporation\",\n  \"slug\": \"acme-corp\",\n  \"identificacionFisica\": \"123456789-0\",\n  \"telefono\": \"+1-555-0123\",\n  \"direccion\": \"123 Business St, City, State 12345\",\n  \"primaryColor\": \"#007bff\",\n  \"secondaryColor\": \"#6c757d\",\n  \"logoUrl\": \"https://example.com/logo.png\"\n}"
             },
             "url": {
               "raw": "{{BASE_URL}}/api/{{API_VERSION}}/organizations",
@@ -643,7 +665,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Acme Europe\",\n  \"slug\": \"acme-europe\",\n  \"description\": \"European division of Acme Corporation\",\n  \"parentId\": \"{{PARENT_ORG_ID}}\"\n}"
+              "raw": "{\n  \"name\": \"Acme Europe\",\n  \"slug\": \"acme-europe\",\n  \"identificacionFisica\": \"987654321-0\",\n  \"telefono\": \"+33-1-2345-6789\",\n  \"direccion\": \"456 Avenue de la République, Paris, France\",\n  \"parentId\": \"{{PARENT_ORG_ID}}\"\n}"
             },
             "url": {
               "raw": "{{BASE_URL}}/api/{{API_VERSION}}/organizations",
@@ -705,7 +727,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Acme Corporation Updated\",\n  \"description\": \"Updated description for Acme Corporation\",\n  \"settings\": {\n    \"features\": {\n      \"userManagement\": true,\n      \"reporting\": true,\n      \"apiAccess\": true\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"Acme Corporation Updated\",\n  \"telefono\": \"+1-555-9999\",\n  \"direccion\": \"789 Updated St, New City, State 54321\",\n  \"primaryColor\": \"#28a745\",\n  \"secondaryColor\": \"#17a2b8\",\n  \"logoUrl\": \"https://example.com/new-logo.png\"\n}"
             },
             "url": {
               "raw": "{{BASE_URL}}/api/{{API_VERSION}}/org/{{TENANT_SLUG}}",
@@ -823,7 +845,7 @@
           }
         },
         {
-          "name": "Invite User to Organization",
+          "name": "Invite Existing User to Organization",
           "request": {
             "method": "POST",
             "header": [
@@ -845,8 +867,35 @@
               "host": ["{{BASE_URL}}"],
               "path": ["api", "{{API_VERSION}}", "org", "{{TENANT_SLUG}}", "members", "invite"]
             },
-            "description": "Invite a user to join the organization (owners/admins/managers only)"
+            "description": "Invite an existing user (by Firebase UID) to join the organization. User will be added immediately. (owners/admins/managers only)"
           }
+        },
+        {
+          "name": "Invite New User by Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ACCESS_TOKEN}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"role\": \"employee\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/{{API_VERSION}}/org/{{TENANT_SLUG}}/members/invite",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "{{API_VERSION}}", "org", "{{TENANT_SLUG}}", "members", "invite"]
+            },
+            "description": "Invite a new user by email address. This creates an invitation record in the database and generates a Firebase Email Link Authentication link.\n\n**What happens:**\n1. Creates an OrganizationInvitation record with status='pending'\n2. Generates a unique invitationToken\n3. Generates Firebase invitation link with the token embedded\n4. Link expires after 7 days\n5. Returns invitation details and invitationLink\n\n**Response includes:**\n- invitation.id: UUID of the invitation\n- invitation.email: Email of invited user\n- invitation.role: Role that will be assigned\n- invitation.status: Status (pending)\n- invitation.expiresAt: Expiration date (7 days from now)\n- invitationLink: Firebase invitation link (should be sent via email service)\n\n**Next steps:**\n- Send the invitationLink via email service to the user\n- User clicks link and is redirected to registration page\n- User registers with the invitationToken from the URL\n- User is automatically added to organization upon registration\n\n**Permissions:** owners/admins/managers only"
+          },
+          "response": []
         },
         {
           "name": "Update User Role",
@@ -991,7 +1040,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"settings\": {\n    \"features\": {\n      \"userManagement\": true,\n      \"reporting\": true,\n      \"apiAccess\": true\n    },\n    \"branding\": {\n      \"primaryColor\": \"#28a745\",\n      \"logo\": \"https://example.com/logo.png\"\n    },\n    \"limits\": {\n      \"maxUsers\": 500,\n      \"maxSubOrgs\": 20\n    }\n  },\n  \"contactInfo\": {\n    \"email\": \"support@acme-corp.com\",\n    \"phone\": \"+1-555-0199\",\n    \"address\": \"456 Updated St, New City, State 54321\"\n  }\n}"
+              "raw": "{\n  \"identificacionFisica\": \"123456789-0\",\n  \"telefono\": \"+1-555-0199\",\n  \"direccion\": \"456 Updated St, New City, State 54321\",\n  \"primaryColor\": \"#28a745\",\n  \"secondaryColor\": \"#17a2b8\",\n  \"logoUrl\": \"https://example.com/logo.png\"\n}"
             },
             "url": {
               "raw": "{{BASE_URL}}/api/{{API_VERSION}}/org/{{TENANT_SLUG}}/settings",

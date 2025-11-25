@@ -123,7 +123,13 @@ export const config = {
   dbSync: {
     users: process.env.SYNC_USERS !== 'false',           // Default: true
     organizations: process.env.SYNC_ORGANIZATIONS === 'true',  // Default: false
-    organizationUsers: process.env.SYNC_ORG_USERS === 'true'   // Default: false
+    organizationUsers: process.env.SYNC_ORG_USERS === 'true',   // Default: false
+    organizationInvitations: process.env.SYNC_ORG_INVITATIONS === 'true'   // Default: false
+  },
+  
+  // Frontend URL for invitation links
+  frontend: {
+    url: process.env.FRONTEND_URL || 'http://localhost:3001',
   },
   
   // Multi-tenant settings

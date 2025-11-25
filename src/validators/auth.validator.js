@@ -27,6 +27,12 @@ export const registerValidation = [
     .trim()
     .isLength({ min: 1, max: 255 })
     .withMessage('Display name must be between 1 and 255 characters'),
+  
+  body('invitationToken')
+    .optional()
+    .trim()
+    .notEmpty()
+    .withMessage('Invitation token cannot be empty if provided'),
 ];
 
 export const loginValidation = [

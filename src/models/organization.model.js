@@ -33,11 +33,15 @@ export const defineOrganizationModel = (sequelize) => {
         comment: 'URL-friendly identifier for the organization',
       },
       
-      // Optional description
-      description: {
-        type: DataTypes.TEXT,
+      // Physical identification (different from table ID)
+      identificacionFisica: {
+        type: DataTypes.STRING,
         allowNull: true,
-        comment: 'Organization description',
+        unique: true,
+        validate: {
+          len: [1, 100],
+        },
+        comment: 'Physical identification number (NIT, RUC, Tax ID, etc.) - different from table ID',
       },
       
       // Hierarchy support: organization can have parent organization
@@ -51,38 +55,49 @@ export const defineOrganizationModel = (sequelize) => {
         comment: 'Parent organization ID for hierarchy support',
       },
       
-      // Organization settings (flexible JSON)
-      settings: {
-        type: DataTypes.JSONB,
-        allowNull: false,
-        defaultValue: {
-          features: {
-            userManagement: true,
-            reporting: true,
-            apiAccess: false,
-          },
-          branding: {
-            primaryColor: '#007bff',
-            logo: null,
-          },
-          limits: {
-            maxUsers: 100,
-            maxSubOrgs: 10,
-          },
-          notifications: {
-            email: true,
-            slack: false,
-          }
+      // Contact information - direct fields
+      telefono: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        validate: {
+          len: [1, 50],
         },
-        comment: 'Organization-specific settings and configuration',
+        comment: 'Organization phone number',
       },
       
-      // Contact information
-      contactInfo: {
-        type: DataTypes.JSONB,
+      direccion: {
+        type: DataTypes.TEXT,
         allowNull: true,
-        defaultValue: {},
-        comment: 'Contact information (email, phone, address, etc.)',
+        comment: 'Organization physical address',
+      },
+      
+      // Branding
+      primaryColor: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        validate: {
+          is: /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/,
+        },
+        defaultValue: '#007bff',
+        comment: 'Primary brand color (hex format)',
+      },
+      
+      secondaryColor: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        validate: {
+          is: /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/,
+        },
+        comment: 'Secondary brand color (hex format)',
+      },
+      
+      logoUrl: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        validate: {
+          isUrl: true,
+        },
+        comment: 'URL to organization logo image',
       },
       
       // Status and control
@@ -99,13 +114,6 @@ export const defineOrganizationModel = (sequelize) => {
         allowNull: false,
         defaultValue: 'free',
         comment: 'Subscription plan type',
-      },
-      
-      // Important dates
-      foundedAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        comment: 'Organization founding date',
       },
       
       // Metadata for extensibility
@@ -127,6 +135,16 @@ export const defineOrganizationModel = (sequelize) => {
         {
           unique: true,
           fields: ['slug'],
+        },
+        {
+          unique: true,
+          fields: ['identificacionFisica'],
+          name: 'organizations_identificacion_fisica_unique',
+          where: {
+            identificacionFisica: {
+              [Op.ne]: null
+            }
+          }
         },
         {
           fields: ['parentId'],
@@ -210,15 +228,6 @@ export const defineOrganizationModel = (sequelize) => {
     return false;
   };
 
-  Organization.prototype.updateSettings = async function(newSettings) {
-    const currentSettings = this.settings || {};
-    const mergedSettings = {
-      ...currentSettings,
-      ...newSettings,
-    };
-    
-    return await this.update({ settings: mergedSettings });
-  };
 
   // Static methods
   Organization.findBySlug = async function(slug) {

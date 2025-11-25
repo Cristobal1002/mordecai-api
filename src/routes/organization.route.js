@@ -21,26 +21,43 @@ const createOrganizationValidation = [
     .isLength({ min: 2, max: 50 })
     .withMessage('Slug must be 2-50 characters, lowercase letters, numbers, and hyphens only'),
   
-  body('description')
+  body('identificacionFisica')
     .optional()
     .trim()
-    .isLength({ max: 1000 })
-    .withMessage('Description must not exceed 1000 characters'),
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Physical identification must be between 1 and 100 characters'),
   
   body('parentId')
     .optional()
     .isUUID()
     .withMessage('Parent ID must be a valid UUID'),
   
-  body('settings')
+  body('telefono')
     .optional()
-    .isObject()
-    .withMessage('Settings must be an object'),
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage('Phone number must be between 1 and 50 characters'),
   
-  body('contactInfo')
+  body('direccion')
     .optional()
-    .isObject()
-    .withMessage('Contact info must be an object'),
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Address must not exceed 500 characters'),
+  
+  body('primaryColor')
+    .optional()
+    .matches(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/)
+    .withMessage('Primary color must be a valid hex color code'),
+  
+  body('secondaryColor')
+    .optional()
+    .matches(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/)
+    .withMessage('Secondary color must be a valid hex color code'),
+  
+  body('logoUrl')
+    .optional()
+    .isURL()
+    .withMessage('Logo URL must be a valid URL'),
 ];
 
 const updateOrganizationValidation = [
@@ -50,27 +67,64 @@ const updateOrganizationValidation = [
     .isLength({ min: 2, max: 255 })
     .withMessage('Organization name must be between 2 and 255 characters'),
   
-  body('description')
+  body('identificacionFisica')
     .optional()
     .trim()
-    .isLength({ max: 1000 })
-    .withMessage('Description must not exceed 1000 characters'),
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Physical identification must be between 1 and 100 characters'),
   
-  body('settings')
+  body('telefono')
     .optional()
-    .isObject()
-    .withMessage('Settings must be an object'),
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage('Phone number must be between 1 and 50 characters'),
   
-  body('contactInfo')
+  body('direccion')
     .optional()
-    .isObject()
-    .withMessage('Contact info must be an object'),
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Address must not exceed 500 characters'),
+  
+  body('primaryColor')
+    .optional()
+    .matches(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/)
+    .withMessage('Primary color must be a valid hex color code'),
+  
+  body('secondaryColor')
+    .optional()
+    .matches(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/)
+    .withMessage('Secondary color must be a valid hex color code'),
+  
+  body('logoUrl')
+    .optional()
+    .isURL()
+    .withMessage('Logo URL must be a valid URL'),
 ];
 
 const inviteUserValidation = [
   body('userFirebaseUid')
+    .optional()
     .notEmpty()
-    .withMessage('User Firebase UID is required'),
+    .withMessage('User Firebase UID cannot be empty if provided'),
+  
+  body('email')
+    .optional()
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email address'),
+  
+  body()
+    .custom((value) => {
+      // At least one of userFirebaseUid or email must be provided
+      if (!value.userFirebaseUid && !value.email) {
+        throw new Error('Either userFirebaseUid or email is required');
+      }
+      // Cannot provide both
+      if (value.userFirebaseUid && value.email) {
+        throw new Error('Provide either userFirebaseUid or email, not both');
+      }
+      return true;
+    }),
   
   body('role')
     .optional()
@@ -293,8 +347,12 @@ router.get('/:tenantSlug/settings',
  */
 router.put('/:tenantSlug/settings',
   requireOrgRole(['owner', 'admin']),
-  body('settings').optional().isObject().withMessage('Settings must be an object'),
-  body('contactInfo').optional().isObject().withMessage('Contact info must be an object'),
+  body('identificacionFisica').optional().trim().isLength({ min: 1, max: 100 }).withMessage('Physical identification must be between 1 and 100 characters'),
+  body('telefono').optional().trim().isLength({ min: 1, max: 50 }).withMessage('Phone number must be between 1 and 50 characters'),
+  body('direccion').optional().trim().isLength({ max: 500 }).withMessage('Address must not exceed 500 characters'),
+  body('primaryColor').optional().matches(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/).withMessage('Primary color must be a valid hex color code'),
+  body('secondaryColor').optional().matches(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/).withMessage('Secondary color must be a valid hex color code'),
+  body('logoUrl').optional().isURL().withMessage('Logo URL must be a valid URL'),
   validateRequest,
   organizationController.updateSettings
 );
