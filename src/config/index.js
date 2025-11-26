@@ -132,6 +132,21 @@ export const config = {
     url: process.env.FRONTEND_URL || 'http://localhost:3001',
   },
   
+  // Email configuration (Nodemailer with Gmail)
+  email: {
+    enabled: process.env.EMAIL_ENABLED !== 'false', // Default: true
+    service: process.env.EMAIL_SERVICE || 'gmail',
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: Number(process.env.EMAIL_PORT) || 587,
+    secure: process.env.EMAIL_SECURE === 'true', // true for 465, false for other ports
+    auth: {
+      user: process.env.EMAIL_USER, // Gmail address
+      pass: process.env.EMAIL_PASSWORD, // Gmail App Password (not regular password)
+    },
+    from: process.env.EMAIL_FROM || process.env.EMAIL_USER, // Sender email
+    fromName: process.env.EMAIL_FROM_NAME || 'Mordecai',
+  },
+  
   // Multi-tenant settings
   tenant: {
     defaultOrgSlug: process.env.DEFAULT_ORG_SLUG || 'default',

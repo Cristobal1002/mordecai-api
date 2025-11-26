@@ -1,8 +1,8 @@
 {
   "info": {
     "name": "Mordecai API",
-    "description": "Complete Mordecai authentication system with Firebase auth and multi-tenant organization management. Includes email invitation system for new users.",
-    "version": "2.1.0",
+    "description": "Complete Mordecai authentication system with Firebase auth and multi-tenant organization management. Includes automated email invitation system for new users with Nodemailer and Gmail integration.",
+    "version": "2.2.0",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -893,7 +893,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["api", "{{API_VERSION}}", "org", "{{TENANT_SLUG}}", "members", "invite"]
             },
-            "description": "Invite a new user by email address. This creates an invitation record in the database and generates a Firebase Email Link Authentication link.\n\n**What happens:**\n1. Creates an OrganizationInvitation record with status='pending'\n2. Generates a unique invitationToken\n3. Generates Firebase invitation link with the token embedded\n4. Link expires after 7 days\n5. Returns invitation details and invitationLink\n\n**Response includes:**\n- invitation.id: UUID of the invitation\n- invitation.email: Email of invited user\n- invitation.role: Role that will be assigned\n- invitation.status: Status (pending)\n- invitation.expiresAt: Expiration date (7 days from now)\n- invitationLink: Firebase invitation link (should be sent via email service)\n\n**Next steps:**\n- Send the invitationLink via email service to the user\n- User clicks link and is redirected to registration page\n- User registers with the invitationToken from the URL\n- User is automatically added to organization upon registration\n\n**Permissions:** owners/admins/managers only"
+            "description":"Invite a new user by email address. This creates an invitation record in the database and generates a Firebase Email Link Authentication link.\n\n**What happens:**\n1. Creates an OrganizationInvitation record with status='pending'\n2. Generates a unique invitationToken\n3. Generates Firebase invitation link with the token embedded\n4. **Automatically sends invitation email via configured email service (if EMAIL_ENABLED=true)**\n5. Link expires after 7 days\n6. Returns invitation details and invitationLink\n\n**Response includes:**\n- invitation.id: UUID of the invitation\n- invitation.email: Email of invited user\n- invitation.role: Role that will be assigned\n- invitation.status: Status (pending)\n- invitation.expiresAt: Expiration date (7 days from now)\n- invitationLink: Firebase invitation link (returned for debugging/testing, automatically sent via email)\n\n**Email Configuration:**\n- Email is automatically sent if EMAIL_ENABLED=true in environment variables\n- If email sending fails, invitation is still created and invitationLink is returned\n- Configure EMAIL_USER, EMAIL_PASSWORD, etc. in .env file\n\n**Next steps (for user):**\n- User receives email with invitation link\n- User clicks link and is redirected to registration page\n- User registers with the invitationToken from the URL\n- User is automatically added to organization upon registration\n\n**Permissions:** owners/admins/managers only"
           },
           "response": []
         },

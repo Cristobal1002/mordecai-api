@@ -9,6 +9,8 @@ Mordecai provides comprehensive authentication functionality using Firebase Auth
 - Password reset functionality
 - Email verification
 - Account security features (login attempts, account locking)
+- Multi-tenant organization management
+- **Automated email invitations** with Nodemailer and Gmail integration
 
 ## Base URL
 
@@ -221,6 +223,122 @@ Verify email address with Firebase ID token.
   "message": "Email verified successfully"
 }
 ```
+
+#### POST /auth/register (with invitation token)
+
+Register a new user with an organization invitation token. This endpoint automatically adds the user to the organization after registration.
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "Password123!",
+  "firstName": "John",
+  "lastName": "Doe",
+  "invitationToken": "invitation-token-from-email-link"
+}
+```
+
+**Validations:**
+- Email must match the invitation email
+- Invitation must be valid (status='pending', not expired)
+- Invitation expires after 7 days
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User registered successfully",
+  "data": {
+    "user": { /* user object */ },
+    "tokens": {
+      "accessToken": "jwt-access-token",
+      "refreshToken": "jwt-refresh-token"
+    }
+  }
+}
+```
+
+**Flow:**
+1. User receives email with invitation link (automatically sent by the system)
+2. Link contains invitationToken in URL: `/auth/register?invitationToken=xxx`
+3. User clicks link and completes registration form
+4. Registration includes the invitationToken
+5. System validates the token and automatically adds user to organization
+6. Invitation is marked as accepted
+
+### Organization Invitation Endpoints
+
+#### POST /api/v1/org/:tenantSlug/members/invite (Invite New User by Email)
+
+Invite a new user to the organization by email address. This endpoint automatically sends an invitation email using the configured email service (Nodemailer with Gmail).
+
+**Headers:**
+```
+Authorization: Bearer <access-token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "email": "newuser@example.com",
+  "role": "employee"
+}
+```
+
+**What happens:**
+1. Creates an OrganizationInvitation record with status='pending'
+2. Generates a unique invitationToken
+3. Generates Firebase invitation link with the token embedded
+4. **Automatically sends invitation email via configured email service (if EMAIL_ENABLED=true)**
+5. Link expires after 7 days
+6. Returns invitation details and invitationLink
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Email invitation sent successfully",
+  "data": {
+    "invitation": {
+      "id": "uuid",
+      "email": "newuser@example.com",
+      "role": "employee",
+      "status": "pending",
+      "expiresAt": "2024-01-08T12:00:00.000Z",
+      "invitedAt": "2024-01-01T12:00:00.000Z"
+    },
+    "invitationLink": "firebase-invitation-link-with-token"
+  }
+}
+```
+
+**Email Configuration:**
+- Email is automatically sent if `EMAIL_ENABLED=true` in environment variables
+- If email sending fails, invitation is still created and invitationLink is returned
+- Configure email settings in `.env` file:
+  - `EMAIL_ENABLED=true`
+  - `EMAIL_USER=your-email@gmail.com`
+  - `EMAIL_PASSWORD=your-gmail-app-password`
+  - `EMAIL_FROM=your-email@gmail.com`
+  - `EMAIL_FROM_NAME=Mordecai`
+
+**Permissions:** owners/admins/managers only
+
+**Email Template:**
+The invitation email includes:
+- Organization name and branding (logo, colors)
+- Inviter's name
+- Role assigned
+- Invitation link (Firebase link with embedded token)
+- Expiration date
+- Professional HTML template with responsive design
+
+**Error Handling:**
+- If email sending fails, the invitation is still created
+- The invitationLink is always returned in the response for debugging/testing
+- Errors are logged but don't fail the invitation creation
 
 ## Error Responses
 

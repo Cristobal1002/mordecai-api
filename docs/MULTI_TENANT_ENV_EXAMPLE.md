@@ -56,6 +56,20 @@ ALLOW_ORG_CREATION=true
 REQUIRE_ORG_INVITE=false
 
 # =============================================================================
+# EMAIL CONFIGURATION (Nodemailer with Gmail)
+# =============================================================================
+# Enable/disable email service (default: true)
+EMAIL_ENABLED=true
+EMAIL_SERVICE=gmail
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASSWORD=your-gmail-app-password
+EMAIL_FROM=your-email@gmail.com
+EMAIL_FROM_NAME=Mordecai
+
+# =============================================================================
 # FIREBASE CONFIGURATION
 # =============================================================================
 FIREBASE_PROJECT_ID=your-firebase-project-id

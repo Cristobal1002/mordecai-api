@@ -83,6 +83,19 @@ RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX=100
 
 # ===========================================
+# EMAIL CONFIGURATION (Nodemailer with Gmail)
+# ===========================================
+EMAIL_ENABLED=true
+EMAIL_SERVICE=gmail
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASSWORD=your-gmail-app-password
+EMAIL_FROM=your-email@gmail.com
+EMAIL_FROM_NAME=Mordecai
+
+# ===========================================
 # ENVIRONMENT VALIDATION
 # ===========================================
 # Set to 'true' to validate required env vars in development
@@ -144,6 +157,23 @@ VALIDATE_ENV=false
 
 ### Rate Limiting
 - **RATE_LIMIT_WINDOW_MS**: Time window for rate limiting in milliseconds
+- **RATE_LIMIT_MAX**: Maximum number of requests per window
+
+### Email Configuration (Nodemailer with Gmail)
+- **EMAIL_ENABLED**: Enable/disable email service (default: `true`). Set to `false` to disable sending emails
+- **EMAIL_SERVICE**: Email service provider (default: `gmail`)
+- **EMAIL_HOST**: SMTP host (default: `smtp.gmail.com`)
+- **EMAIL_PORT**: SMTP port (default: `587` for Gmail)
+- **EMAIL_SECURE**: Use secure connection (default: `false` for port 587, `true` for port 465)
+- **EMAIL_USER**: Gmail address to send emails from
+- **EMAIL_PASSWORD**: Gmail App Password (⚠️ NOT your regular Gmail password). Generate at: https://myaccount.google.com/apppasswords
+- **EMAIL_FROM**: Sender email address (defaults to EMAIL_USER if not set)
+- **EMAIL_FROM_NAME**: Display name for sender (default: `Mordecai`)
+
+**Important:** To use Gmail, you need to:
+1. Enable 2-Step Verification in your Google account
+2. Generate an App Password at https://myaccount.google.com/apppasswords
+3. Use the App Password (16 characters) as `EMAIL_PASSWORD`
 - **RATE_LIMIT_MAX**: Maximum requests per time window
 
 ## Setup Instructions

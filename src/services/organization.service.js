@@ -4,6 +4,7 @@ import { AuthenticationError, ValidationError, ConflictError } from '../errors/i
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
 import { generateInvitationLink } from '../config/firebase.js';
+import { emailService } from './email.service.js';
 
 class OrganizationService {
   
@@ -495,6 +496,42 @@ class OrganizationService {
           inviterUserId,
           role
         }, 'Email invitation created successfully');
+        
+        // Send invitation email (after transaction commit to avoid sending if DB fails)
+        try {
+          const emailResult = await emailService.sendInvitationEmail({
+            to: normalizedEmail,
+            invitationLink,
+            organizationName: organization.name,
+            inviterName: inviter.displayName || inviter.email || 'Un administrador',
+            role,
+            expiresAt: invitation.expiresAt,
+            primaryColor: organization.primaryColor || '#007bff',
+            secondaryColor: organization.secondaryColor || '#6c757d',
+            logoUrl: organization.logoUrl,
+          });
+          
+          if (emailResult.sent) {
+            logger.info({
+              invitationId: invitation.id,
+              email: normalizedEmail,
+              messageId: emailResult.messageId,
+            }, 'Invitation email sent successfully');
+          } else {
+            logger.warn({
+              invitationId: invitation.id,
+              email: normalizedEmail,
+              reason: emailResult.reason || emailResult.error,
+            }, 'Failed to send invitation email, but invitation was created');
+          }
+        } catch (emailError) {
+          // Log error but don't fail the invitation creation
+          logger.error({
+            error: emailError,
+            invitationId: invitation.id,
+            email: normalizedEmail,
+          }, 'Error sending invitation email (invitation still created)');
+        }
         
         return {
           invitation,
