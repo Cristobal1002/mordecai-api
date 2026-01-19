@@ -145,10 +145,13 @@ Ver `.env.example` para todas las variables disponibles. Las principales son:
 - `DB_PASSWORD` - Contraseña de PostgreSQL
 - `DB_HOST` - Host de PostgreSQL (default: localhost)
 - `DB_PORT` - Puerto de PostgreSQL (default: 5432)
+- `DB_SSL` - Habilitar conexión SSL (default: false, usar `true` para RDS de AWS u otros servicios que requieran SSL)
 - `DB_LOGGING` - Habilitar logs de Sequelize (default: false)
 - `DB_SYNC_MODE` - Modo de sincronización: `alter`, `force`, o `false` (default: false)
 
-**⚠️ Importante**: Si no tienes base de datos configurada, puedes deshabilitarla con `DB_ENABLED=false` en tu `.env`. El servidor arrancará normalmente, pero los módulos que requieran base de datos lanzarán un error claro.
+**⚠️ Importante**: 
+- Si no tienes base de datos configurada, puedes deshabilitarla con `DB_ENABLED=false` en tu `.env`. El servidor arrancará normalmente, pero los módulos que requieran base de datos lanzarán un error claro.
+- Para bases de datos en la nube (RDS de AWS, etc.) que requieren SSL, agrega `DB_SSL=true` en tu `.env`.
 
 #### CORS y Rate Limiting
 - `CORS_ORIGIN` - Orígenes permitidos (default: "*")

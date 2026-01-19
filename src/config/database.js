@@ -18,6 +18,12 @@ if (config.db.enabled) {
         dialect: config.db.dialect,
         pool: config.db.pool,
         logging: config.db.logging ? (msg) => logger.debug(msg) : false,
+        dialectOptions: {
+          ssl: process.env.DB_SSL === 'true' ? {
+            require: true,
+            rejectUnauthorized: false,
+          } : false,
+        },
       }
     );
   }
