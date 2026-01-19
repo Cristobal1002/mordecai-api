@@ -1,62 +1,89 @@
-import express from 'express';
+import { Router } from 'express';
 import { sequelize } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
 
-export const health = express.Router();
+const router = Router();
 
 // Health check básico
-health.get('/', async (req, res) => {
-  res.ok({ status: 'OK', timestamp: new Date().toISOString() });
+router.get('/', (req, res) => {
+  return res.ok(
+    {
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+    },
+    'Service is healthy'
+  );
 });
 
 // Readiness probe (verifica DB)
-health.get('/ready', async (req, res) => {
+router.get('/ready', async (req, res) => {
   try {
-    await sequelize.authenticate();
-    res.ok({
-      status: 'ready',
-      database: 'connected',
-      timestamp: new Date().toISOString(),
-    });
+    if (config.db.enabled) {
+      await sequelize.authenticate();
+      return res.ok(
+        {
+          status: 'READY',
+          database: 'connected',
+          timestamp: new Date().toISOString(),
+        },
+        'Service is ready'
+      );
+    } else {
+      return res.ok(
+        {
+          status: 'READY',
+          database: 'disabled',
+          timestamp: new Date().toISOString(),
+        },
+        'Service is ready (database disabled)'
+      );
+    }
   } catch (error) {
-    logger.error({ error }, 'Health check failed');
-    res.status(503).json({
-      success: false,
-      status: 'not ready',
-      database: 'disconnected',
-      timestamp: new Date().toISOString(),
-    });
+    logger.error({ error }, 'Database readiness check failed');
+    return res.serverError(
+      {
+        status: 'NOT_READY',
+        database: 'disconnected',
+        timestamp: new Date().toISOString(),
+      },
+      'Service is not ready'
+    );
   }
 });
 
 // Liveness probe
-health.get('/live', async (req, res) => {
-  res.ok({
-    status: 'alive',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-  });
+router.get('/live', (req, res) => {
+  return res.ok(
+    {
+      status: 'LIVE',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    },
+    'Service is alive'
+  );
 });
 
 // Endpoints de prueba de errores (solo en desarrollo)
 if (config.app.nodeEnv === 'development') {
-  health.get('/not-found', async () => {
+  router.get('/not-found', async () => {
     const { NotFoundError } = await import('../errors/index.js');
     throw new NotFoundError('Property');
   });
 
-  health.get('/forbidden', async () => {
+  router.get('/forbidden', async () => {
     const { ForbiddenError } = await import('../errors/index.js');
     throw new ForbiddenError('Access denied to resource');
   });
 
-  health.get('/integration', async () => {
+  router.get('/integration', async () => {
     const { IntegrationError } = await import('../errors/index.js');
     throw new IntegrationError('Shopify', { credentials: 'Invalid credentials' });
   });
 
-  health.get('/boom', async () => {
+  router.get('/boom', async () => {
     throw new Error('Internal explosion');
   });
 }
+
+export default router;

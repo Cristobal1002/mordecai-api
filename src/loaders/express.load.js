@@ -2,11 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import swaggerUi from 'swagger-ui-express';
+import swaggerJsdoc from 'swagger-jsdoc';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import { routes } from '../routes/index.js';
+import routes from '../routes/index.js';
 import { responseHandler } from '../middlewares/index.js';
 import { errorHandlerMiddleware } from '../middlewares/index.js';
+import { swaggerOptions } from '../config/swagger.js';
 
 export const loadExpress = (app) => {
   // Security headers
@@ -54,6 +57,38 @@ export const loadExpress = (app) => {
 
   // Response handler middleware
   app.use(responseHandler);
+
+  // Swagger only in development
+  if (config.app.nodeEnv === 'development') {
+    // Swagger (UI + JSON)
+    const swaggerCustomCss = `
+    .swagger-ui .opblock-tag small {
+      display: block !important;
+      margin-top: 4px !important;
+    }
+    .swagger-ui .opblock-tag a {
+      display: block !important;
+    }
+    .swagger-ui .opblock-tag {
+      display: block !important;
+    }
+    `;
+
+    const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+    app.use(
+      `/api/${config.app.apiVersion}/docs`,
+      swaggerUi.serve,
+      swaggerUi.setup(swaggerSpec, {
+        explorer: true,
+        customCss: swaggerCustomCss,
+      })
+    );
+
+    app.get(`/api/${config.app.apiVersion}/docs.json`, (req, res) => {
+      res.json(swaggerSpec);
+    });
+  }
 
   // Routes
   routes(app);

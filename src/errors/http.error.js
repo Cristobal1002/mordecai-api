@@ -29,3 +29,9 @@ export class DatabaseError extends CustomError {
         super("Database error.", 500, details, "https://mordcai.com/errors/database");
     }
 }
+
+export class BadRequestError extends CustomError {
+    constructor(message = "Bad request.") {
+        super(message, 400, null, "https://mordcai.com/errors/bad-request");
+    }
+}

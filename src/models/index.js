@@ -2,23 +2,15 @@
  * Inicializa todos los modelos de Sequelize y sus relaciones
  * @param {Sequelize} sequelize - Instancia de Sequelize
  */
+import { Example } from './example.model.js';
+
 export const initModels = (sequelize) => {
-  // 1. Importar modelos (descomenta cuando los crees)
-  // import { Partner } from './Partner.model.js';
-  // import { Company } from './Company.model.js';
-  // import { User } from './User.model.js';
+  // Inicializar modelos
+  Example.initModel(sequelize);
 
-
-  // 2. Inicializar modelos (descomenta cuando los crees)
-
-  // User.initModel(sequelize);
-
-
-  // 3. Definir relaciones (descomenta cuando tengas los modelos)
-
-  // User → Company
-  // Company.hasMany(User, { foreignKey: 'companyId' });
-  // User.belongsTo(Company, { foreignKey: 'companyId' });
-
+  // Definir relaciones aquí cuando tengas múltiples modelos
+  // Ejemplo:
+  // Company.hasMany(Example, { foreignKey: 'companyId' });
+  // Example.belongsTo(Company, { foreignKey: 'companyId' });
 };
 

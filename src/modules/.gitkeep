@@ -1,0 +1,9 @@
+# Esta carpeta contiene los módulos de la aplicación
+# Cada módulo debe tener su propia carpeta con la siguiente estructura:
+# - module-name.controller.js
+# - module-name.service.js
+# - module-name.repository.js
+# - module-name.routes.js
+# - module-name.validator.js
+# - module-name.swagger.js (opcional)
+
