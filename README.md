@@ -155,8 +155,8 @@ Ver `.env.example` para todas las variables disponibles. Las principales son:
 
 #### CORS y Rate Limiting
 - `CORS_ORIGIN` - Orígenes permitidos (default: "*")
-- `RATE_LIMIT_WINDOW_MS` - Ventana de tiempo para rate limiting (default: 900000 = 15 min)
-- `RATE_LIMIT_MAX` - Máximo de requests por ventana (default: 100)
+- `RATE_LIMIT_WINDOW_MS` - Ventana de tiempo para rate limiting en milisegundos (default: 60000 = 1 minuto)
+- `RATE_LIMIT_MAX` - Máximo de requests por ventana (default: 100 = 100 peticiones por minuto)
 
 ### Base de Datos
 

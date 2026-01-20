@@ -64,8 +64,8 @@ export const config = {
     credentials: process.env.CORS_CREDENTIALS === 'true',
   },
   rateLimit: {
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutos
-    max: Number(process.env.RATE_LIMIT_MAX) || 100, // 100 requests por ventana
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000, // 1 minuto
+    max: Number(process.env.RATE_LIMIT_MAX) || 100, // 100 requests por minuto
   },
 };
 

@@ -29,7 +29,7 @@ export const loadExpress = (app) => {
   app.use(express.json({ limit: '20mb' }));
   app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
-  // Rate limiting
+  // Rate limiting - más estricto para prevenir abuso
   const limiter = rateLimit({
     windowMs: config.rateLimit.windowMs,
     max: config.rateLimit.max,
@@ -39,19 +39,88 @@ export const loadExpress = (app) => {
     },
     standardHeaders: true,
     legacyHeaders: false,
+    handler: (req, res) => {
+      logger.warn(
+        {
+          method: req.method,
+          url: req.url,
+          ip: req.ip,
+        },
+        'Rate limit exceeded'
+      );
+      res.status(429).json({
+        success: false,
+        message: 'Too many requests from this IP, try again later.',
+      });
+    },
+    skip: (req) => {
+      // No aplicar rate limiting a health checks
+      return req.url.includes('/health');
+    },
   });
-  app.use('/api/', limiter);
 
-  // Request logging
+  app.use('/api/', limiter);
+  
+  // Middleware para detectar y limitar peticiones repetidas a rutas inexistentes
+  const recent404s = new Map();
+  app.use('/api/', (req, res, next) => {
+    const key = `${req.ip}:${req.url}`;
+    const now = Date.now();
+    const recent = recent404s.get(key) || [];
+    
+    // Limpiar entradas antiguas (más de 1 minuto)
+    const filtered = recent.filter((time) => now - time < 60000);
+    
+    // Si hay más de 5 peticiones 404 a la misma ruta en 1 minuto, bloquear
+    if (filtered.length >= 5) {
+      logger.warn(
+        {
+          method: req.method,
+          url: req.url,
+          ip: req.ip,
+          count: filtered.length,
+        },
+        'Blocking repeated 404 requests'
+      );
+      return res.status(429).json({
+        success: false,
+        message: 'Too many requests to non-existent route. Please check your API endpoint.',
+      });
+    }
+    
+    // Guardar referencia para verificar después si fue 404
+    res.on('finish', () => {
+      if (res.statusCode === 404) {
+        filtered.push(now);
+        recent404s.set(key, filtered);
+      }
+    });
+    
+    next();
+  });
+
+  // Request logging - después del rate limiting para no saturar logs
+  // Incluye información detallada para identificar el origen de las peticiones
   app.use((req, res, next) => {
-    logger.info(
-      {
-        method: req.method,
-        url: req.url,
-        ip: req.ip,
-      },
-      'Incoming request'
-    );
+    const logData = {
+      method: req.method,
+      url: req.url,
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+      referer: req.get('referer'),
+      origin: req.get('origin'),
+      host: req.get('host'),
+      // Solo loggear headers adicionales si están presentes para no saturar
+      ...(req.get('x-forwarded-for') && { forwardedFor: req.get('x-forwarded-for') }),
+      ...(req.get('authorization') && { hasAuth: !!req.get('authorization') }),
+    };
+    
+    // Para rutas 404, usar nivel warn para destacarlas
+    const is404Route = req.url.includes('/auth/me') || req.url.includes('/api/v1/auth/me');
+    const logLevel = is404Route ? 'warn' : 'info';
+    const logMessage = is404Route ? 'Incoming request to non-existent route' : 'Incoming request';
+    
+    logger[logLevel](logData, logMessage);
     next();
   });
 
