@@ -33,6 +33,7 @@
   },
   "homepage": "https://github.com/Cristobal1002/node-boilerplate#readme",
   "dependencies": {
+    "aws-jwt-verify": "^5.1.1",
     "axios": "^1.13.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
