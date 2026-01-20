@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { sequelize } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
+import { requireAuth } from '../middlewares/index.js';
 
 const router = Router();
 
@@ -61,6 +62,22 @@ router.get('/live', (req, res) => {
       timestamp: new Date().toISOString(),
     },
     'Service is alive'
+  );
+});
+
+// Health check secured with auth
+router.get('/secure', requireAuth(), (req, res) => {
+  return res.ok(
+    {
+      ok: true,
+      user: {
+        sub: req.user?.sub,
+        username: req.user?.username,
+        scope: req.user?.scope,
+        client_id: req.user?.client_id,
+      },
+    },
+    'Authenticated'
   );
 });
 
