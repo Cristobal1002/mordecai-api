@@ -68,7 +68,7 @@ Se crea `import_batches`:
 Se crean/actualizan:
 
 **A) Deudor**
-Tabla:
+Tabla: b
 - `debtors`
 
 - Se crea o reutiliza por `email`/`phone` dentro del `tenant_id`.
