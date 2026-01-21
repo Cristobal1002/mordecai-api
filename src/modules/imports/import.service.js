@@ -1,26 +1,222 @@
-
 import fs from 'fs';
+import path from 'path';
 import xlsx from 'xlsx';
+import { Op } from 'sequelize';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { sequelize } from '../../config/database.js';
 import { importRepository } from './import.repository.js';
 import { Debtor, DebtCase, FlowPolicy } from '../../models/index.js';
 import { logger } from '../../utils/logger.js';
-import { Op } from 'sequelize';
+
+const getS3Client = () => {
+    const region = process.env.AWS_REGION;
+    if (!region) {
+        throw new Error('Missing AWS_REGION env var');
+    }
+
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
+    const config = { region };
+    if (accessKeyId && secretAccessKey) {
+        config.credentials = { accessKeyId, secretAccessKey };
+    }
+
+    return new S3Client(config);
+};
+
+const getBucketName = () => {
+    const bucket = process.env.S3_BUCKET_NAME;
+    if (!bucket) {
+        throw new Error('Missing S3_BUCKET_NAME env var');
+    }
+    return bucket;
+};
+
+const buildS3Key = (tenantId, batchId, originalName) => {
+    const extension = path.extname(originalName || '') || '.xlsx';
+    return `tenants/${tenantId}/import-batches/${batchId}/original${extension}`;
+};
+
+const uploadToS3 = async (filePath, key) => {
+    const bucket = getBucketName();
+    const s3Client = getS3Client();
+    const body = fs.createReadStream(filePath);
+
+    await s3Client.send(
+        new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: body,
+            ContentType:
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        })
+    );
+};
+
+const downloadFromS3 = async (key) => {
+    const bucket = getBucketName();
+    const s3Client = getS3Client();
+
+    const response = await s3Client.send(
+        new GetObjectCommand({
+            Bucket: bucket,
+            Key: key,
+        })
+    );
+
+    const stream = response.Body;
+    if (!stream) {
+        throw new Error('Empty S3 response body');
+    }
+
+    const chunks = [];
+    for await (const chunk of stream) {
+        chunks.push(chunk);
+    }
+
+    return Buffer.concat(chunks);
+};
+
+const parseDateCell = (value) => {
+    if (!value) return null;
+
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value;
+    }
+
+    if (typeof value === 'number') {
+        const dateParts = xlsx.SSF.parse_date_code(value);
+        if (dateParts) {
+            return new Date(
+                dateParts.y,
+                dateParts.m - 1,
+                dateParts.d,
+                dateParts.H,
+                dateParts.M,
+                Math.round(dateParts.S)
+            );
+        }
+    }
+
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+    }
+
+    return null;
+};
+
+const parseAmountToCents = (value) => {
+    const raw = value === null || value === undefined ? '' : String(value).trim();
+    if (!raw) {
+        throw new Error('Missing amount_due');
+    }
+
+    const normalized = raw.replace(/,/g, '');
+    const numberValue = Number(normalized);
+    if (!Number.isFinite(numberValue)) {
+        throw new Error(`Invalid amount_due: ${value}`);
+    }
+
+    return Math.round(numberValue * 100);
+};
+
+const parseDaysPastDue = (value, dueDate) => {
+    const raw = value === null || value === undefined ? '' : String(value).trim();
+    if (raw) {
+        const numberValue = Number(raw);
+        if (Number.isFinite(numberValue)) {
+            return Math.max(0, Math.floor(numberValue));
+        }
+    }
+
+    if (!dueDate) {
+        throw new Error('Missing days_past_due and invalid due_date');
+    }
+
+    const now = new Date();
+    const diffMs = now - dueDate;
+    if (diffMs <= 0) {
+        return 0;
+    }
+
+    return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+};
+
+const cleanString = (value) => {
+    if (value === null || value === undefined) return null;
+    const str = String(value).trim();
+    return str.length ? str : null;
+};
+
+const buildDebtorMetadata = (row) => {
+    const metadata = {};
+    if (cleanString(row.unit)) metadata.unit = cleanString(row.unit);
+    if (cleanString(row.property_name)) metadata.property_name = cleanString(row.property_name);
+    if (cleanString(row.lease_id)) metadata.lease_id = cleanString(row.lease_id);
+    return metadata;
+};
+
+const buildCaseMeta = (row) => {
+    const meta = {};
+    if (cleanString(row.notes)) meta.notes = cleanString(row.notes);
+    if (row.last_payment_date) {
+        const parsedLastPayment = parseDateCell(row.last_payment_date);
+        meta.last_payment_date = parsedLastPayment
+            ? parsedLastPayment.toISOString()
+            : row.last_payment_date;
+    }
+    if (cleanString(row.balance_type)) meta.balance_type = cleanString(row.balance_type);
+    if (row.move_out_date) {
+        const parsedMoveOut = parseDateCell(row.move_out_date);
+        meta.move_out_date = parsedMoveOut
+            ? parsedMoveOut.toISOString()
+            : row.move_out_date;
+    }
+    if (cleanString(row.lease_id)) meta.lease_id = cleanString(row.lease_id);
+    return meta;
+};
+
+const selectPolicyId = (policies, daysPastDue) => {
+    const policy = policies.find((p) => {
+        const minOk = daysPastDue >= p.minDaysPastDue;
+        const maxOk = p.maxDaysPastDue === null || daysPastDue <= p.maxDaysPastDue;
+        return minOk && maxOk;
+    });
+    return policy ? policy.id : null;
+};
 
 export const importService = {
     createBatch: async (tenantId, file) => {
-        // File is the object from multer
-        // file.path contains the local path
-
-        //TODO: persist xslx in s3
-
-        return await importRepository.create({
+        const batch = await importRepository.create({
             tenantId,
             source: 'XLSX',
-            fileKey: file.path,
+            fileKey: null,
             status: 'PENDING',
-            totalRows: 0 // Will be updated on process
+            totalRows: 0,
         });
+
+        const s3Key = buildS3Key(tenantId, batch.id, file.originalname);
+
+        try {
+            await uploadToS3(file.path, s3Key);
+            await importRepository.update(batch.id, { fileKey: s3Key });
+            batch.fileKey = s3Key;
+        } catch (error) {
+            logger.error({ error, tenantId, batchId: batch.id }, 'Error uploading XLSX to S3');
+            await importRepository.update(batch.id, {
+                status: 'FAILED',
+                errors: [{ error: error.message }],
+            });
+            throw error;
+        } finally {
+            fs.promises.unlink(file.path).catch((err) => {
+                logger.warn({ err, path: file.path }, 'Failed to delete temp file');
+            });
+        }
+
+        return batch;
     },
 
     getBatchStatus: async (tenantId, batchId) => {
@@ -34,20 +230,29 @@ export const importService = {
         const batch = await importRepository.findById(batchId);
         if (!batch) throw new Error('Batch not found');
         if (batch.tenantId !== tenantId) throw new Error('Unauthorized');
-        if (batch.status !== 'PENDING') throw new Error(`Batch is in ${batch.status} status`);
+        if (batch.status !== 'PENDING') {
+            throw new Error(`Batch is in ${batch.status} status`);
+        }
+        if (!batch.fileKey) {
+            throw new Error('Batch file key is missing');
+        }
 
-        // Start processing
-        await importRepository.update(batchId, { status: 'PROCESSING', processedAt: new Date() });
+        await importRepository.update(batchId, {
+            status: 'PROCESSING',
+            processedAt: new Date(),
+        });
 
         try {
-            if (!fs.existsSync(batch.fileKey)) {
-                throw new Error(`File not found at ${batch.fileKey}`);
-            }
+            const buffer = await downloadFromS3(batch.fileKey);
 
-            const workbook = xlsx.readFile(batch.fileKey);
+            const workbook = xlsx.read(buffer, { type: 'buffer' });
             const sheetName = workbook.SheetNames[0];
             const sheet = workbook.Sheets[sheetName];
-            const rows = xlsx.utils.sheet_to_json(sheet);
+            const rows = xlsx.utils.sheet_to_json(sheet, { defval: null });
+
+            if (rows.length === 0) {
+                throw new Error('No rows found in XLSX');
+            }
 
             await importRepository.update(batchId, { totalRows: rows.length });
 
@@ -55,131 +260,167 @@ export const importService = {
             let errorCount = 0;
             const errors = [];
 
-            // Pre-fetch flow policies for this tenant to avoid querying in loop
             const policies = await FlowPolicy.findAll({
-                where: { tenantId, isActive: true }
+                where: { tenantId, isActive: true },
+                order: [['minDaysPastDue', 'ASC']],
             });
 
-            // Iterate rows
-            // Note: For MVP we do sequential processing. for Scale we'd use streams or queues.
             for (const [index, row] of rows.entries()) {
-                const rowIndex = index + 2; // +2 considering header and 1-based index
+                const rowIndex = index + 2;
                 const t = await sequelize.transaction();
 
                 try {
-                    // Validate required fields
-                    // Expected: external_id, name, email, phone, debt_amount, due_date
-                    if (!row.external_id || !row.name || !row.debt_amount || !row.due_date) {
-                        throw new Error('Missing required fields (external_id, name, debt_amount, due_date)');
+                    const fullName = cleanString(row.full_name);
+                    const email = cleanString(row.email);
+                    const phone = cleanString(row.phone);
+                    const externalRef = cleanString(row.external_ref);
+
+                    if (!fullName) {
+                        throw new Error('Missing full_name');
                     }
 
-                    // 1. Upsert Debtor
-                    const [debtor] = await Debtor.upsert({
-                        tenantId,
-                        externalRef: String(row.external_id),
-                        fullName: row.name,
-                        email: row.email,
-                        phone: row.phone ? String(row.phone) : null,
-                        metadata: { imported_from_batch: batchId }
-                    }, { transaction: t });
+                    if (!email && !phone && !externalRef) {
+                        throw new Error('Missing debtor identifiers (email, phone, external_ref)');
+                    }
 
-                    // 2. Calculate Days Past Due
-                    // Handle different date formats if necessary, but assuming standard JS parsable
-                    const dueDate = new Date(row.due_date);
-                    if (isNaN(dueDate.getTime())) throw new Error(`Invalid date format for due_date: ${row.due_date}`);
+                    const amountDueCents = parseAmountToCents(row.amount_due);
+                    const dueDate = parseDateCell(row.due_date);
+                    if (!dueDate) {
+                        throw new Error(`Invalid due_date: ${row.due_date}`);
+                    }
 
-                    const now = new Date();
-                    const diffTime = Math.abs(now - dueDate);
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    // Technically if due date is in future, dpd might be negative? 
-                    // Let's assume past due if date is before now.
-                    const isPastDue = now > dueDate;
-                    const daysPastDue = isPastDue ? diffDays : 0;
+                    const daysPastDue = parseDaysPastDue(row.days_past_due, dueDate);
+                    const currency = (cleanString(row.currency) || 'USD').toUpperCase();
 
-                    // 3. Find matching policy
-                    // Policy rules: min <= dpd <= max (or max is null)
-                    let selectedPolicyId = null;
-                    const policy = policies.find(p => {
-                        const minOk = daysPastDue >= p.minDaysPastDue;
-                        const maxOk = p.maxDaysPastDue === null || daysPastDue <= p.maxDaysPastDue;
-                        return minOk && maxOk;
+                    const debtorWhere = [];
+                    if (email) debtorWhere.push({ email });
+                    if (phone) debtorWhere.push({ phone });
+                    if (externalRef) debtorWhere.push({ externalRef });
+
+                    let debtor = await Debtor.findOne({
+                        where: {
+                            tenantId,
+                            [Op.or]: debtorWhere,
+                        },
+                        transaction: t,
                     });
 
-                    if (policy) {
-                        selectedPolicyId = policy.id;
+                    const debtorMetadata = buildDebtorMetadata(row);
+
+                    if (debtor) {
+                        const mergedMetadata = {
+                            ...(debtor.metadata || {}),
+                            ...debtorMetadata,
+                        };
+
+                        await debtor.update(
+                            {
+                                fullName,
+                                email,
+                                phone,
+                                externalRef,
+                                metadata: mergedMetadata,
+                            },
+                            { transaction: t }
+                        );
+                    } else {
+                        debtor = await Debtor.create(
+                            {
+                                tenantId,
+                                externalRef,
+                                fullName,
+                                email,
+                                phone,
+                                metadata: debtorMetadata,
+                            },
+                            { transaction: t }
+                        );
                     }
 
-                    // 4. Upsert Debt Case
-                    // We assume 1 active case per debtor for MVP simplicity? 
-                    // Or maybe we treat external_id + logic as unique case?
-                    // Let's create a new case or update existing "OPEN" case for this debtor.
-                    // For MVP, let's just create/update a unique case per debtor (1:1 simplification)
-                    // or if we have a "case_id" column in XLSX use that.
-                    // Let's assume 1 active debt per debtor for now.
+                    const flowPolicyId = selectPolicyId(policies, daysPastDue);
+                    const caseMeta = buildCaseMeta(row);
 
-                    // Find existing open case
                     let debtCase = await DebtCase.findOne({
                         where: {
                             tenantId,
                             debtorId: debtor.id,
-                            status: { [Op.notIn]: ['PAID', 'CLOSED'] }
+                            importBatchId: batch.id,
                         },
-                        transaction: t
+                        transaction: t,
                     });
 
                     if (debtCase) {
-                        await debtCase.update({
-                            amount: row.debt_amount,
-                            dueDate: dueDate,
-                            daysPastDue: daysPastDue,
-                            flowPolicyId: selectedPolicyId, // Update policy as DPD changes
-                            // status: remains same unless logic changes it
-                        }, { transaction: t });
+                        const mergedMeta = {
+                            ...(debtCase.meta || {}),
+                            ...caseMeta,
+                        };
+
+                        await debtCase.update(
+                            {
+                                amountDueCents,
+                                dueDate,
+                                daysPastDue,
+                                currency,
+                                flowPolicyId,
+                                meta: mergedMeta,
+                            },
+                            { transaction: t }
+                        );
                     } else {
-                        await DebtCase.create({
-                            tenantId,
-                            debtorId: debtor.id,
-                            amount: row.debt_amount,
-                            dueDate: dueDate,
-                            status: 'PENDING', // Start as pending/active
-                            daysPastDue: daysPastDue,
-                            flowPolicyId: selectedPolicyId,
-                            nextActionAt: new Date() // ready for worker
-                        }, { transaction: t });
+                        await DebtCase.create(
+                            {
+                                tenantId,
+                                debtorId: debtor.id,
+                                importBatchId: batch.id,
+                                amountDueCents,
+                                currency,
+                                daysPastDue,
+                                dueDate,
+                                status: 'NEW',
+                                nextActionAt: new Date(),
+                                flowPolicyId,
+                                meta: caseMeta,
+                            },
+                            { transaction: t }
+                        );
                     }
 
                     await t.commit();
                     successCount++;
-
                 } catch (err) {
                     await t.rollback();
                     errorCount++;
-                    errors.push({ row: rowIndex, error: err.message, date: row });
+                    errors.push({
+                        row: rowIndex,
+                        error: err.message,
+                        data: row,
+                    });
                 }
             }
 
-            // Final Update
+            const status = errorCount === rows.length ? 'FAILED' : 'COMPLETED';
             await importRepository.update(batchId, {
-                status: errorCount === rows.length ? 'FAILED' : 'COMPLETED',
+                status,
                 successRows: successCount,
                 errorRows: errorCount,
-                errors: errors // store errors JSON
+                errors,
+                processedAt: new Date(),
             });
 
             return {
-                status: 'COMPLETED',
+                status,
                 total: rows.length,
                 success: successCount,
-                failed: errorCount
+                failed: errorCount,
             };
-
         } catch (error) {
-            logger.error({ error }, 'Fatal error processing batch');
+            logger.error({ error, batchId }, 'Fatal error processing batch');
             await importRepository.update(batchId, {
                 status: 'FAILED',
-                errors: [{ error: 'Fatal error: ' + error.message }]
+                errors: [{ error: `Fatal error: ${error.message}` }],
+                processedAt: new Date(),
             });
             throw error;
         }
-    }
+    },
 };

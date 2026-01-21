@@ -21,7 +21,7 @@ export const importController = {
         try {
             const { tenantId, batchId } = req.params;
             const result = await importService.getBatchStatus(tenantId, batchId);
-            res.success(result);
+            res.ok(result, 'Batch status retrieved successfully');
         } catch (error) {
             next(error);
         }
@@ -30,17 +30,8 @@ export const importController = {
     processBatch: async (req, res, next) => {
         try {
             const { tenantId, batchId } = req.params;
-            // Start processing asynchronously (fire and forget for response, but await for MVP simplicity to see result?)
-            // User requested "POST ... process -> procesar XLSX...". 
-            // Often better to return "Processing started" and let client poll.
-            // But for verifying debug loop, avoiding async complexity might be better. 
-            // Let's TRIGGER it and return.
-
-            importService.processBatch(tenantId, batchId).catch(err => {
-                console.error('Async processing error', err);
-            });
-
-            res.success({ message: 'Batch processing started. Check status endpoint.' });
+            const result = await importService.processBatch(tenantId, batchId);
+            res.ok(result, 'Batch processed successfully');
         } catch (error) {
             next(error);
         }
