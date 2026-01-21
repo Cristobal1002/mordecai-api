@@ -41,13 +41,15 @@
     "express-rate-limit": "^7.4.1",
     "express-validator": "^7.3.0",
     "helmet": "^8.0.0",
+    "multer": "^2.0.2",
     "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "sequelize": "^6.37.7",
     "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
