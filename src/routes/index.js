@@ -3,6 +3,7 @@ import health from './health.route.js';
 // Importar módulos aquí
 import exampleRoutes from '../modules/example/example.routes.js';
 import tenantRoutes from '../modules/tenants/tenant.routes.js';
+import flowPolicyRoutes from '../modules/flow-policies/flow-policy.routes.js';
 import importRoutes from '../modules/imports/import.routes.js';
 import workRoutes from '../modules/work/work.routes.js';
 import debtorRoutes from '../modules/debtors/debtor.routes.js';
@@ -17,6 +18,7 @@ const routes = (app) => {
   // Agregar módulos aquí
   router.use('/examples', exampleRoutes);
   router.use('/tenants', tenantRoutes);
+  router.use('/tenants', flowPolicyRoutes);
   router.use('/import-batches', importRoutes);
   router.use('/work', workRoutes);
   router.use('/debtors', debtorRoutes);
