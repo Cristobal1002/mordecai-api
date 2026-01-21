@@ -15,7 +15,7 @@ export const tenantController = {
         try {
             const { tenantId } = req.params;
             const result = await tenantService.seedFlowPolicies(tenantId);
-            res.success(result, 'Flow policies seeded successfully');
+            res.ok(result, 'Flow policies seeded successfully');
         } catch (error) {
             next(error);
         }
