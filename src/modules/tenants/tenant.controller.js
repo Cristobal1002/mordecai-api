@@ -10,14 +10,4 @@ export const tenantController = {
             next(error);
         }
     },
-
-    seedFlowPolicies: async (req, res, next) => {
-        try {
-            const { tenantId } = req.params;
-            const result = await tenantService.seedFlowPolicies(tenantId);
-            res.ok(result, 'Flow policies seeded successfully');
-        } catch (error) {
-            next(error);
-        }
-    }
 };

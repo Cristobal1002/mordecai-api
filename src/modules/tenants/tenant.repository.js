@@ -3,9 +3,10 @@ import { Tenant } from '../../models/index.js';
 import { logger } from '../../utils/logger.js';
 
 export const tenantRepository = {
-    create: async (data) => {
+    create: async (data, transaction) => {
         try {
-            return await Tenant.create(data);
+            const options = transaction ? { transaction } : undefined;
+            return await Tenant.create(data, options);
         } catch (error) {
             logger.error({ error }, 'Error creating tenant');
             throw error;

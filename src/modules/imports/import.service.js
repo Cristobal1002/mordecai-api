@@ -12,6 +12,8 @@ export const importService = {
         // File is the object from multer
         // file.path contains the local path
 
+        //TODO: persist xslx in s3
+
         return await importRepository.create({
             tenantId,
             source: 'XLSX',
