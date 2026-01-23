@@ -123,7 +123,7 @@ export const scheduleDueCallCases = async ({
       queued += 1;
     } catch (error) {
       logger.error(
-        { error, caseId: row.id },
+        { err: error, caseId: row.id },
         'Failed to enqueue case action job'
       );
     }
