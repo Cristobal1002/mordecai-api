@@ -113,7 +113,7 @@ export const scheduleDueCallCases = async ({
         JOB_TYPES.CALL_CASE,
         { tenantId: row.tenant_id, caseId: row.id },
         {
-          jobId: `${JOB_TYPES.CALL_CASE}:${row.id}`,
+          jobId: `${JOB_TYPES.CALL_CASE}-${row.id}`,
           attempts: Number(process.env.WORKER_ATTEMPTS) || 3,
           backoff: { type: 'exponential', delay: 2000 },
           removeOnComplete: 1000,
