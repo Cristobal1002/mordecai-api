@@ -14,17 +14,20 @@ const run = async () => {
   }
 
   const limit = Number(process.env.SCHEDULER_LIMIT) || 500;
+  const perTenantLimit =
+    Number(process.env.SCHEDULER_PER_TENANT_LIMIT) || 10;
   const cooldownMinutes = Number(process.env.SCHEDULER_COOLDOWN_MINUTES) || 360;
   const tenantId = process.env.SCHEDULER_TENANT_ID || null;
 
   const result = await scheduleDueCallCases({
     tenantId,
     limit,
+    perTenantLimit,
     cooldownMinutes,
   });
 
   logger.info(
-    { ...result, limit, cooldownMinutes, tenantId },
+    { ...result, limit, perTenantLimit, cooldownMinutes, tenantId },
     'Scheduler run completed'
   );
 };

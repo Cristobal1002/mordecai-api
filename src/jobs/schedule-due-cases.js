@@ -3,7 +3,11 @@ import { logger } from '../utils/logger.js';
 import { caseActionsQueue, JOB_TYPES } from '../queues/case-actions.queue.js';
 
 const DEFAULT_LIMIT = 500;
+const DEFAULT_PER_TENANT_LIMIT = 10;
 const DEFAULT_COOLDOWN_MINUTES = 360;
+
+const resolvePerTenantLimit = (tenantId, limit, perTenantLimit) =>
+  tenantId ? limit : perTenantLimit;
 
 const buildTenantClause = (tenantId, replacements) => {
   if (!tenantId) {
@@ -14,23 +18,45 @@ const buildTenantClause = (tenantId, replacements) => {
   return 'AND dc.tenant_id = :tenantId';
 };
 
-export const listDueCallCases = async ({ tenantId, limit = DEFAULT_LIMIT } = {}) => {
+export const listDueCallCases = async ({
+  tenantId,
+  limit = DEFAULT_LIMIT,
+  perTenantLimit = DEFAULT_PER_TENANT_LIMIT,
+} = {}) => {
   if (!sequelize) {
     throw new Error('Database connection is not initialized.');
   }
 
-  const replacements = { limit };
+  const effectivePerTenantLimit = resolvePerTenantLimit(
+    tenantId,
+    limit,
+    perTenantLimit
+  );
+  const replacements = { limit, perTenantLimit: effectivePerTenantLimit };
   const tenantClause = buildTenantClause(tenantId, replacements);
 
   const sql = `
-    SELECT dc.id, dc.tenant_id
-    FROM debt_cases dc
-    JOIN flow_policies fp ON fp.id = dc.flow_policy_id
-    WHERE dc.status IN ('NEW','IN_PROGRESS')
-      AND (dc.next_action_at IS NULL OR dc.next_action_at <= NOW())
-      ${tenantClause}
-      AND COALESCE((fp.channels->>'call')::boolean, false) = true
-    ORDER BY dc.next_action_at NULLS FIRST, dc.created_at
+    WITH due AS (
+      SELECT
+        dc.id,
+        dc.tenant_id,
+        dc.next_action_at,
+        dc.created_at,
+        row_number() OVER (
+          PARTITION BY dc.tenant_id
+          ORDER BY dc.next_action_at NULLS FIRST, dc.created_at
+        ) AS rn
+      FROM debt_cases dc
+      JOIN flow_policies fp ON fp.id = dc.flow_policy_id
+      WHERE dc.status IN ('NEW','IN_PROGRESS')
+        AND (dc.next_action_at IS NULL OR dc.next_action_at <= NOW())
+        ${tenantClause}
+        AND COALESCE((fp.channels->>'call')::boolean, false) = true
+    )
+    SELECT id, tenant_id
+    FROM due
+    WHERE rn <= :perTenantLimit
+    ORDER BY next_action_at NULLS FIRST, created_at
     LIMIT :limit;
   `;
 
@@ -41,6 +67,7 @@ export const listDueCallCases = async ({ tenantId, limit = DEFAULT_LIMIT } = {})
 const claimDueCallCases = async ({
   tenantId,
   limit = DEFAULT_LIMIT,
+  perTenantLimit = DEFAULT_PER_TENANT_LIMIT,
   cooldownMinutes = DEFAULT_COOLDOWN_MINUTES,
   transaction,
 } = {}) => {
@@ -48,26 +75,48 @@ const claimDueCallCases = async ({
     throw new Error('Database connection is not initialized.');
   }
 
-  const replacements = { limit, cooldownMinutes };
+  const effectivePerTenantLimit = resolvePerTenantLimit(
+    tenantId,
+    limit,
+    perTenantLimit
+  );
+  const replacements = {
+    limit,
+    perTenantLimit: effectivePerTenantLimit,
+    cooldownMinutes,
+  };
   const tenantClause = buildTenantClause(tenantId, replacements);
 
   const sql = `
     WITH due AS (
-      SELECT dc.id
+      SELECT
+        dc.id,
+        dc.tenant_id,
+        dc.next_action_at,
+        dc.created_at,
+        row_number() OVER (
+          PARTITION BY dc.tenant_id
+          ORDER BY dc.next_action_at NULLS FIRST, dc.created_at
+        ) AS rn
       FROM debt_cases dc
       JOIN flow_policies fp ON fp.id = dc.flow_policy_id
       WHERE dc.status IN ('NEW','IN_PROGRESS')
         AND (dc.next_action_at IS NULL OR dc.next_action_at <= NOW())
         ${tenantClause}
         AND COALESCE((fp.channels->>'call')::boolean, false) = true
-      ORDER BY dc.next_action_at NULLS FIRST, dc.created_at
+    ),
+    picked AS (
+      SELECT id
+      FROM due
+      WHERE rn <= :perTenantLimit
+      ORDER BY next_action_at NULLS FIRST, created_at
       LIMIT :limit
       FOR UPDATE SKIP LOCKED
     )
     UPDATE debt_cases dc
     SET next_action_at = NOW() + (:cooldownMinutes || ' minutes')::interval
-    FROM due
-    WHERE dc.id = due.id
+    FROM picked
+    WHERE dc.id = picked.id
     RETURNING dc.id, dc.tenant_id;
   `;
 
@@ -82,11 +131,12 @@ const claimDueCallCases = async ({
 export const scheduleDueCallCases = async ({
   tenantId,
   limit = DEFAULT_LIMIT,
+  perTenantLimit = DEFAULT_PER_TENANT_LIMIT,
   cooldownMinutes = DEFAULT_COOLDOWN_MINUTES,
   dryRun = false,
 } = {}) => {
   if (dryRun) {
-    const rows = await listDueCallCases({ tenantId, limit });
+    const rows = await listDueCallCases({ tenantId, limit, perTenantLimit });
     return {
       dryRun: true,
       queued: 0,
@@ -99,6 +149,7 @@ export const scheduleDueCallCases = async ({
     const rows = await claimDueCallCases({
       tenantId,
       limit,
+      perTenantLimit,
       cooldownMinutes,
       transaction,
     });
