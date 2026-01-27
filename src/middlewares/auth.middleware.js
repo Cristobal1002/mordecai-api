@@ -1,4 +1,5 @@
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
+import { COOKIE_NAMES, parseCookies } from '../utils/cookies.js';
 
 const region = process.env.COGNITO_REGION;
 const userPoolId = process.env.COGNITO_USER_POOL_ID;
@@ -21,11 +22,20 @@ export const requireAuth = () => async (req, res, next) => {
     const authHeader = req.headers.authorization ?? '';
     const [type, token] = authHeader.split(' ');
 
-    if (type !== 'Bearer' || !token) {
+    let authToken = null;
+
+    if (type === 'Bearer' && token) {
+      authToken = token;
+    } else {
+      const cookies = parseCookies(req.headers.cookie);
+      authToken = cookies[COOKIE_NAMES.access];
+    }
+
+    if (!authToken) {
       return res.unauthorized('Unauthorized');
     }
 
-    const payload = await verifier.verify(token);
+    const payload = await verifier.verify(authToken);
     req.user = payload;
     return next();
   } catch {
