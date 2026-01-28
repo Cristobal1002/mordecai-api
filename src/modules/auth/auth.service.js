@@ -1,9 +1,14 @@
 import crypto from 'crypto';
+import axios from 'axios';
 import {
   CognitoIdentityProviderClient,
   SignUpCommand,
   ConfirmSignUpCommand,
   AdminInitiateAuthCommand,
+  ForgotPasswordCommand,
+  ConfirmForgotPasswordCommand,
+  ResendConfirmationCodeCommand,
+  RevokeTokenCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import {
   BadRequestError,
@@ -16,6 +21,10 @@ const region = process.env.COGNITO_REGION;
 const userPoolId = process.env.COGNITO_USER_POOL_ID;
 const clientId = process.env.COGNITO_CLIENT_ID;
 const clientSecret = process.env.COGNITO_CLIENT_SECRET || null;
+const cognitoDomain = process.env.COGNITO_DOMAIN || null;
+const oauthRedirectUri = process.env.COGNITO_OAUTH_REDIRECT_URI || null;
+const oauthScopes = process.env.COGNITO_OAUTH_SCOPES || 'openid email profile';
+const frontendRedirectUri = process.env.COGNITO_FRONTEND_REDIRECT_URI || null;
 
 if (!region || !userPoolId || !clientId) {
   throw new Error(
@@ -30,6 +39,40 @@ if (!clientSecret) {
 }
 
 const cognitoClient = new CognitoIdentityProviderClient({ region });
+
+const normalizeDomain = (domain) => domain?.replace(/\/+$/, '');
+
+const getOauthConfig = () => {
+  const domain = normalizeDomain(cognitoDomain);
+
+  if (!domain || !oauthRedirectUri) {
+    throw new BadRequestError(
+      'Missing OAuth configuration: COGNITO_DOMAIN and COGNITO_OAUTH_REDIRECT_URI'
+    );
+  }
+
+  return {
+    domain,
+    redirectUri: oauthRedirectUri,
+    scope: oauthScopes,
+    frontendRedirectUri,
+  };
+};
+
+const providerAliasMap = {
+  google: 'Google',
+  microsoft: 'Microsoft',
+};
+
+const resolveProvider = (provider) => {
+  const alias = providerAliasMap[String(provider || '').toLowerCase()];
+
+  if (!alias) {
+    throw new BadRequestError('Unsupported provider. Use Google or Microsoft.');
+  }
+
+  return alias;
+};
 
 const secretHashFor = (username) => {
   if (!clientSecret) {
@@ -83,6 +126,13 @@ const buildUserAttributes = ({ email, name, phoneNumber }) => {
   return attributes;
 };
 
+const normalizePhoneNumber = (value) => {
+  if (!value || typeof value !== 'string') {
+    return undefined;
+  }
+  return value.replace(/[\s()-]/g, '');
+};
+
 const normalizeAuthResult = (authenticationResult, fallback = {}) => {
   if (!authenticationResult) {
     return {
@@ -103,6 +153,18 @@ const normalizeAuthResult = (authenticationResult, fallback = {}) => {
   };
 };
 
+const normalizeOauthTokens = (data, state) => ({
+  state: state || null,
+  tokens: {
+    accessToken: data.access_token,
+    idToken: data.id_token,
+    refreshToken: data.refresh_token,
+    expiresIn: data.expires_in,
+    tokenType: data.token_type,
+    scope: data.scope,
+  },
+});
+
 export const authService = {
   register: async ({
     email,
@@ -116,7 +178,7 @@ export const authService = {
       throw new BadRequestError('You must accept the terms.');
     }
 
-    const normalizedPhoneNumber = phoneNumber || phone || undefined;
+    const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber || phone);
 
     const command = new SignUpCommand({
       ClientId: clientId,
@@ -188,6 +250,10 @@ export const authService = {
   },
 
   refresh: async ({ email, refreshToken }) => {
+    if (clientSecret && !email) {
+      throw new BadRequestError('Email is required to refresh tokens.');
+    }
+
     const command = new AdminInitiateAuthCommand({
       UserPoolId: userPoolId,
       AuthFlow: 'REFRESH_TOKEN_AUTH',
@@ -206,6 +272,123 @@ export const authService = {
       return normalizeAuthResult(result.AuthenticationResult);
     } catch (error) {
       mapCognitoError(error);
+    }
+  },
+
+  forgotPassword: async ({ email }) => {
+    const command = new ForgotPasswordCommand({
+      ClientId: clientId,
+      Username: email,
+      SecretHash: secretHashFor(email),
+    });
+
+    try {
+      const result = await cognitoClient.send(command);
+      return {
+        delivery: result.CodeDeliveryDetails || null,
+      };
+    } catch (error) {
+      mapCognitoError(error);
+    }
+  },
+
+  resetPassword: async ({ email, code, password }) => {
+    const command = new ConfirmForgotPasswordCommand({
+      ClientId: clientId,
+      Username: email,
+      ConfirmationCode: code,
+      Password: password,
+      SecretHash: secretHashFor(email),
+    });
+
+    try {
+      await cognitoClient.send(command);
+      return { reset: true };
+    } catch (error) {
+      mapCognitoError(error);
+    }
+  },
+
+  resendConfirmation: async ({ email }) => {
+    const command = new ResendConfirmationCodeCommand({
+      ClientId: clientId,
+      Username: email,
+      SecretHash: secretHashFor(email),
+    });
+
+    try {
+      const result = await cognitoClient.send(command);
+      return { delivery: result.CodeDeliveryDetails || null };
+    } catch (error) {
+      mapCognitoError(error);
+    }
+  },
+
+  logout: async ({ refreshToken }) => {
+    if (!refreshToken) {
+      throw new BadRequestError('refreshToken is required.');
+    }
+
+    const command = new RevokeTokenCommand({
+      ClientId: clientId,
+      Token: refreshToken,
+      ...(clientSecret ? { ClientSecret: clientSecret } : {}),
+    });
+
+    try {
+      await cognitoClient.send(command);
+      return { revoked: true };
+    } catch (error) {
+      mapCognitoError(error);
+    }
+  },
+
+  oauthStart: ({ provider, state }) => {
+    const { domain, redirectUri, scope } = getOauthConfig();
+    const identityProvider = resolveProvider(provider);
+
+    const params = new URLSearchParams({
+      identity_provider: identityProvider,
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope,
+      ...(state ? { state } : {}),
+    });
+
+    return {
+      authorizeUrl: `${domain}/oauth2/authorize?${params.toString()}`,
+    };
+  },
+
+  oauthCallback: async ({ code, state }) => {
+    const { domain, redirectUri } = getOauthConfig();
+
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      code,
+      redirect_uri: redirectUri,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
+    });
+
+    try {
+      const { data } = await axios.post(`${domain}/oauth2/token`, body, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      return normalizeOauthTokens(data, state);
+    } catch (error) {
+      const message =
+        error?.response?.data?.error_description ||
+        error?.response?.data?.error ||
+        error.message ||
+        'OAuth token exchange failed';
+
+      logger.error({ err: error }, 'OAuth token exchange failed');
+      throw new UnauthorizedError(message);
     }
   },
 };

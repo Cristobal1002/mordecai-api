@@ -21,7 +21,13 @@ export const loadExpress = (app) => {
       origin: config.cors.origin === '*' ? true : config.cors.origin.split(','),
       credentials: config.cors.credentials,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'x-app-token'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'x-app-token',
+        'x-csrf-token',
+        'x-xsrf-token',
+      ],
     })
   );
 

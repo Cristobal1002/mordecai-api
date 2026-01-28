@@ -1,18 +1,47 @@
 
 import { tenantRepository } from './tenant.repository.js';
 import { sequelize } from '../../config/database.js';
-import { FlowPolicy } from '../../models/index.js';
+import { FlowPolicy, TenantUser } from '../../models/index.js';
 import { logger } from '../../utils/logger.js';
+import { getAuthIdentity } from '../../utils/auth-identity.js';
+import { userService } from '../users/user.service.js';
+import { BadRequestError, ConflictError, ForbiddenError } from '../../errors/index.js';
+
+const enforceSingleTenant = process.env.ENFORCE_SINGLE_TENANT !== 'false';
 
 export const tenantService = {
-    create: async (data) => {
+    create: async (data, req) => {
+        const identity = getAuthIdentity(req);
+        if (!identity.sub || !identity.email) {
+            throw new ForbiddenError('Unauthorized');
+        }
+
         return await sequelize.transaction(async (transaction) => {
+            const user = await userService.ensureUserFromAuth(identity, transaction);
+
+            if (enforceSingleTenant) {
+                const existing = await userService.countActiveMemberships(user.id, transaction);
+                if (existing > 0) {
+                    throw new ConflictError('User already belongs to a tenant.');
+                }
+            }
+
             const tenant = await tenantRepository.create(
                 {
                     ...data,
                     status: 'active',
                 },
                 transaction
+            );
+
+            await TenantUser.create(
+                {
+                    tenantId: tenant.id,
+                    userId: user.id,
+                    role: 'owner',
+                    status: 'active',
+                },
+                { transaction }
             );
 
             await seedDefaultFlowPolicies(tenant.id, transaction);
