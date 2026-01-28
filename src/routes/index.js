@@ -9,6 +9,8 @@ import workRoutes from '../modules/work/work.routes.js';
 import debtorRoutes from '../modules/debtors/debtor.routes.js';
 import debtCaseRoutes from '../modules/debt-cases/debt-case.routes.js';
 import authRoutes from '../modules/auth/auth.routes.js';
+import membershipRoutes from '../modules/memberships/membership.routes.js';
+import invitationRoutes from '../modules/invitations/invitation.routes.js';
 
 import { config } from '../config/index.js';
 
@@ -20,6 +22,8 @@ const routes = (app) => {
   router.use('/examples', exampleRoutes);
   router.use('/auth', authRoutes);
   router.use('/tenants', tenantRoutes);
+  router.use('/tenants', membershipRoutes);
+  router.use('/invitations', invitationRoutes);
   router.use('/tenants', flowPolicyRoutes);
   router.use('/import-batches', importRoutes);
   router.use('/work', workRoutes);
