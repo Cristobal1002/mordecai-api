@@ -36,6 +36,25 @@ export const userService = {
     return await userService.createFromAuth(identity, transaction);
   },
 
+  getUserByAuth: async (identity, transaction) => {
+    if (!identity?.sub) {
+      return null;
+    }
+    const options = transaction ? { transaction } : undefined;
+    return await User.findOne({ where: { cognitoSub: identity.sub }, ...options });
+  },
+
+  listMemberships: async (userId, transaction) => {
+    if (!userId) {
+      return [];
+    }
+    const options = transaction ? { transaction } : undefined;
+    return await TenantUser.findAll({
+      where: { userId, status: 'active' },
+      ...options,
+    });
+  },
+
   countActiveMemberships: async (userId, transaction) => {
     const options = transaction ? { transaction } : undefined;
     return await TenantUser.count({

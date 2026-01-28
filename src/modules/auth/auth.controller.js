@@ -9,6 +9,8 @@ import {
 import { BadRequestError } from '../../errors/index.js';
 import { COOKIE_NAMES, parseCookies } from '../../utils/cookies.js';
 import { decodeJwtPayload } from '../../utils/jwt.js';
+import { getAuthIdentity } from '../../utils/auth-identity.js';
+import { userService } from '../users/user.service.js';
 
 export const authController = {
   register: async (req, res, next) => {
@@ -167,10 +169,18 @@ export const authController = {
         );
       }
 
+      const identity = getAuthIdentity(req);
+      const user = await userService.getUserByAuth(identity);
+      const memberships = user
+        ? await userService.listMemberships(user.id)
+        : [];
+      const needsOnboarding = !user || memberships.length === 0;
+
       const url = new URL(redirectUri);
       const params = new URLSearchParams({
         success: '1',
         csrfToken,
+        needsOnboarding: needsOnboarding ? '1' : '0',
         ...(result.state ? { state: result.state } : {}),
       });
 
@@ -197,6 +207,13 @@ export const authController = {
       idPayload?.username ||
       null;
 
+    const identity = getAuthIdentity(req);
+    const user = await userService.getUserByAuth(identity);
+    const memberships = user
+      ? await userService.listMemberships(user.id)
+      : [];
+    const needsOnboarding = !user || memberships.length === 0;
+
     return res.ok(
       {
         user: {
@@ -204,6 +221,9 @@ export const authController = {
           ...(email && { email }),
           ...(username && { username }),
         },
+        userExists: Boolean(user),
+        needsOnboarding,
+        memberships,
       },
       'Authenticated user'
     );
