@@ -6,7 +6,24 @@ import { requireAuth } from '../middlewares/index.js';
 
 const router = Router();
 
+/**
+ * @swagger
+ * tags:
+ *   name: Health
+ *   description: Endpoints de estado y monitoreo del servicio.
+ */
+
 // Health check básico
+/**
+ * @swagger
+ * /health:
+ *   get:
+ *     summary: Health check básico
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: Servicio OK
+ */
 router.get('/', (req, res) => {
   return res.ok(
     {
@@ -18,6 +35,18 @@ router.get('/', (req, res) => {
 });
 
 // Readiness probe (verifica DB)
+/**
+ * @swagger
+ * /health/ready:
+ *   get:
+ *     summary: Readiness probe
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: Servicio listo (DB conectada o deshabilitada)
+ *       500:
+ *         description: DB no disponible
+ */
 router.get('/ready', async (req, res) => {
   try {
     if (config.db.enabled) {
@@ -54,6 +83,16 @@ router.get('/ready', async (req, res) => {
 });
 
 // Liveness probe
+/**
+ * @swagger
+ * /health/live:
+ *   get:
+ *     summary: Liveness probe
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: Servicio vivo
+ */
 router.get('/live', (req, res) => {
   return res.ok(
     {
@@ -66,6 +105,20 @@ router.get('/live', (req, res) => {
 });
 
 // Health check secured with auth
+/**
+ * @swagger
+ * /health/secure:
+ *   get:
+ *     summary: Health check autenticado
+ *     tags: [Health]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Autenticado
+ *       401:
+ *         description: No autorizado
+ */
 router.get('/secure', requireAuth(), (req, res) => {
   return res.ok(
     {
