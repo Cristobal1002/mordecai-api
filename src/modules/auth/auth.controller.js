@@ -152,9 +152,33 @@ export const authController = {
 
   oauthCallback: async (req, res, next) => {
     try {
-      const { code, state } = req.query;
-      const result = await authService.oauthCallback({ code, state });
+      const { code, state, error, error_description: errorDescription } = req.query;
       const redirectUri = process.env.COGNITO_FRONTEND_REDIRECT_URI || null;
+
+      if (error) {
+        if (!redirectUri) {
+          return res.badRequest(
+            typeof errorDescription === 'string'
+              ? errorDescription
+              : String(error)
+          );
+        }
+
+        const url = new URL(redirectUri);
+        const params = new URLSearchParams({
+          oauth: 'failed',
+          ...(typeof error === 'string' ? { error } : {}),
+          ...(typeof errorDescription === 'string'
+            ? { error_description: errorDescription }
+            : {}),
+          ...(state ? { state } : {}),
+        });
+
+        url.search = params.toString();
+        return res.redirect(url.toString());
+      }
+
+      const result = await authService.oauthCallback({ code, state });
       const csrfToken = generateCsrfToken();
 
       if (result.tokens) {

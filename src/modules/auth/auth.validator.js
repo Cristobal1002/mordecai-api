@@ -79,8 +79,16 @@ export const oauthStartValidator = [
 ];
 
 export const oauthCallbackValidator = [
-  query('code').isString().notEmpty().withMessage('code is required'),
+  query('code').optional().isString().notEmpty().withMessage('code is required'),
+  query('error').optional().isString(),
+  query('error_description').optional().isString(),
   query('state').optional().isString(),
+  query().custom((_value, { req }) => {
+    if (!req.query.code && !req.query.error) {
+      throw new Error('code is required');
+    }
+    return true;
+  }),
 ];
 
 export const forgotValidator = [
