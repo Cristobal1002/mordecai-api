@@ -25,6 +25,7 @@ const clientSecret = process.env.COGNITO_CLIENT_SECRET || null;
 const cognitoDomain = process.env.COGNITO_DOMAIN || null;
 const oauthRedirectUri = process.env.COGNITO_OAUTH_REDIRECT_URI || null;
 const oauthScopes = process.env.COGNITO_OAUTH_SCOPES || 'openid email profile';
+const oauthPrompt = process.env.COGNITO_OAUTH_PROMPT || null;
 const frontendRedirectUri = process.env.COGNITO_FRONTEND_REDIRECT_URI || null;
 
 if (!region || !userPoolId || !clientId) {
@@ -400,6 +401,7 @@ export const authService = {
       client_id: clientId,
       redirect_uri: redirectUri,
       scope,
+      ...(oauthPrompt ? { prompt: oauthPrompt } : {}),
       ...(state ? { state } : {}),
     });
 
