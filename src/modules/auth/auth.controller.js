@@ -169,8 +169,24 @@ export const authController = {
         );
       }
 
-      const identity = getAuthIdentity(req);
-      const user = await userService.getUserByAuth(identity);
+      const idPayload = decodeJwtPayload(result.tokens?.idToken);
+      const email =
+        idPayload?.email ||
+        idPayload?.['cognito:username'] ||
+        idPayload?.username ||
+        null;
+
+      const identity = {
+        sub: idPayload?.sub || null,
+        email: typeof email === 'string' ? email.trim().toLowerCase() : null,
+        fullName: idPayload?.name || idPayload?.['given_name'] || null,
+        phone: idPayload?.phone_number || null,
+      };
+
+      let user = await userService.getUserByAuth(identity);
+      if (!user && identity.email) {
+        user = await userService.findByEmail(identity.email);
+      }
       const memberships = user
         ? await userService.listMemberships(user.id)
         : [];
@@ -208,7 +224,10 @@ export const authController = {
       null;
 
     const identity = getAuthIdentity(req);
-    const user = await userService.getUserByAuth(identity);
+    let user = await userService.getUserByAuth(identity);
+    if (!user && identity?.email) {
+      user = await userService.findByEmail(identity.email);
+    }
     const memberships = user
       ? await userService.listMemberships(user.id)
       : [];

@@ -26,22 +26,55 @@ export const userService = {
   },
 
   ensureUserFromAuth: async (identity, transaction) => {
-    const existing = await userService.findByCognitoSub(
-      identity.sub,
-      transaction
-    );
-    if (existing) {
-      return existing;
+    if (!identity) {
+      return null;
     }
+
+    if (identity.email) {
+      const existingByEmail = await userService.findByEmail(
+        identity.email,
+        transaction
+      );
+      if (existingByEmail) {
+        return existingByEmail;
+      }
+    }
+
+    if (identity.sub) {
+      const existing = await userService.findByCognitoSub(
+        identity.sub,
+        transaction
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
     return await userService.createFromAuth(identity, transaction);
   },
 
   getUserByAuth: async (identity, transaction) => {
-    if (!identity?.sub) {
+    if (!identity) {
       return null;
     }
+
     const options = transaction ? { transaction } : undefined;
-    return await User.findOne({ where: { cognitoSub: identity.sub }, ...options });
+
+    if (identity.sub) {
+      const bySub = await User.findOne({
+        where: { cognitoSub: identity.sub },
+        ...options,
+      });
+      if (bySub) {
+        return bySub;
+      }
+    }
+
+    if (identity.email) {
+      return await User.findOne({ where: { email: identity.email }, ...options });
+    }
+
+    return null;
   },
 
   listMemberships: async (userId, transaction) => {

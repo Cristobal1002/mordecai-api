@@ -9,6 +9,7 @@ import {
   ConfirmForgotPasswordCommand,
   ResendConfirmationCodeCommand,
   RevokeTokenCommand,
+  ListUsersCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import {
   BadRequestError,
@@ -39,6 +40,38 @@ if (!clientSecret) {
 }
 
 const cognitoClient = new CognitoIdentityProviderClient({ region });
+
+const findUserByEmail = async (email) => {
+  if (!email) {
+    return null;
+  }
+
+  const command = new ListUsersCommand({
+    UserPoolId: userPoolId,
+    Filter: `email = "${email}"`,
+    Limit: 1,
+  });
+
+  const result = await cognitoClient.send(command);
+  return result.Users?.[0] || null;
+};
+
+const getExternalProviderByEmail = async (email) => {
+  const user = await findUserByEmail(email);
+  const identitiesValue = user?.Attributes?.find((attr) => attr.Name === 'identities')?.Value;
+
+  if (!identitiesValue) {
+    return null;
+  }
+
+  try {
+    const identities = JSON.parse(identitiesValue);
+    const providerName = identities?.[0]?.providerName;
+    return providerName || null;
+  } catch {
+    return null;
+  }
+};
 
 const normalizeDomain = (domain) => domain?.replace(/\/+$/, '');
 
@@ -200,6 +233,20 @@ export const authService = {
         nextStep: result.UserConfirmed ? 'DONE' : 'CONFIRM_SIGN_UP',
       };
     } catch (error) {
+      if (error?.name === 'UsernameExistsException') {
+        let provider = null;
+        try {
+          provider = await getExternalProviderByEmail(email);
+        } catch (lookupError) {
+          logger.warn({ err: lookupError }, 'Failed to resolve external provider by email');
+        }
+        if (provider) {
+          throw new ConflictError(
+            `You already signed up with ${provider}. Please use social login.`
+          );
+        }
+        throw new ConflictError('User already exists.');
+      }
       mapCognitoError(error);
     }
   },
