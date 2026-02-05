@@ -11,6 +11,7 @@ import debtCaseRoutes from '../modules/debt-cases/debt-case.routes.js';
 import authRoutes from '../modules/auth/auth.routes.js';
 import membershipRoutes from '../modules/memberships/membership.routes.js';
 import invitationRoutes from '../modules/invitations/invitation.routes.js';
+import twilioRoutes from '../modules/twilio/twilio.routes.js';
 
 import { config } from '../config/index.js';
 
@@ -29,6 +30,7 @@ const routes = (app) => {
   router.use('/work', workRoutes);
   router.use('/debtors', debtorRoutes);
   router.use('/debt-cases', debtCaseRoutes);
+  router.use('/twilio', twilioRoutes);
 
   app.use(`/api/${config.app.apiVersion}`, router);
 };
