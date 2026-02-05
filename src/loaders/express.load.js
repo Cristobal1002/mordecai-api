@@ -12,6 +12,9 @@ import { errorHandlerMiddleware } from '../middlewares/index.js';
 import { swaggerOptions } from '../config/swagger.js';
 
 export const loadExpress = (app) => {
+  // App Runner/ELB sits in front of the app, so trust proxy headers
+  // for correct IP detection and to avoid express-rate-limit warnings.
+  app.set('trust proxy', 1);
   // Security headers
   app.use(helmet());
 
@@ -60,8 +63,8 @@ export const loadExpress = (app) => {
       });
     },
     skip: (req) => {
-      // No aplicar rate limiting a health checks
-      return req.url.includes('/health');
+      // No aplicar rate limiting a health checks ni al WebSocket stream de Twilio
+      return req.url.includes('/health') || req.url.includes('/twilio/stream');
     },
   });
 

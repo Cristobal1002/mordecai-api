@@ -152,6 +152,19 @@ export const attachTwilioStreamServer = (server) => {
   server.on('upgrade', (request, socket, head) => {
     try {
       const { pathname } = new URL(request.url, 'http://localhost');
+      logger.info(
+        {
+          pathname,
+          ip: request.socket?.remoteAddress,
+          headers: {
+            host: request.headers?.host,
+            upgrade: request.headers?.upgrade,
+            connection: request.headers?.connection,
+            forwardedFor: request.headers?.['x-forwarded-for'],
+          },
+        },
+        'Incoming upgrade request'
+      );
       if (pathname !== STREAM_PATH) return;
 
       wss.handleUpgrade(request, socket, head, (ws) => {
