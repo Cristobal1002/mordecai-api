@@ -9,7 +9,10 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error({ reason, promise }, 'Unhandled Rejection');
+  logger.error(
+    { err: reason, errorMessage: reason?.message, promise },
+    'Unhandled Rejection'
+  );
 });
 
 startServer().catch((error) => {
