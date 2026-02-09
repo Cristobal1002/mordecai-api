@@ -32,13 +32,31 @@ const parseSseStream = async (stream, onEvent) => {
       buffer = buffer.slice(boundary + 2);
       boundary = buffer.indexOf('\n\n');
 
-      if (!chunk.startsWith('data:')) continue;
-      const payload = chunk.replace(/^data:\s*/, '');
+      if (!chunk) continue;
+
+      const lines = chunk.split('\n');
+      let eventType = null;
+      const dataLines = [];
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          eventType = line.slice('event:'.length).trim();
+          continue;
+        }
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice('data:'.length).trimStart());
+        }
+      }
+
+      const payload = dataLines.join('\n');
       if (!payload) continue;
       if (payload === '[DONE]') return;
 
       try {
         const parsed = JSON.parse(payload);
+        if (!parsed.type && eventType) {
+          parsed.type = eventType;
+        }
         if (debug && parsed?.type) {
           logger.debug({ type: parsed.type }, 'OpenAI stream event');
         }
