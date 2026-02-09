@@ -108,11 +108,27 @@ export const streamChatResponse = async (payload, onDelta) => {
     throw new Error('LLM response stream is empty');
   }
 
+  let hasOutput = false;
   await parseSseStream(response.body, async (event) => {
     if (event.type === 'response.output_text.delta') {
-      await onDelta(event.delta || '');
+      const delta = event.delta || '';
+      if (delta) {
+        hasOutput = true;
+        await onDelta(delta);
+      }
+    }
+    if (event.type === 'response.output_text.done') {
+      const text = event.text || '';
+      if (text) {
+        hasOutput = true;
+        await onDelta(text);
+      }
     }
   });
+
+  if (!hasOutput) {
+    logger.warn({ model: payload?.model }, 'LLM response contained no output text');
+  }
 };
 
 export const synthesizeSpeech = async (text, options) => {
