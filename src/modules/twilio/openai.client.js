@@ -18,12 +18,13 @@ const parseSseStream = async (stream, onEvent) => {
   const reader = stream.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  const debug = process.env.OPENAI_STREAM_DEBUG === 'true';
 
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
     let boundary = buffer.indexOf('\n\n');
 
     while (boundary !== -1) {
@@ -38,6 +39,9 @@ const parseSseStream = async (stream, onEvent) => {
 
       try {
         const parsed = JSON.parse(payload);
+        if (debug && parsed?.type) {
+          logger.debug({ type: parsed.type }, 'OpenAI stream event');
+        }
         await onEvent(parsed);
       } catch (error) {
         logger.warn({ error, payload }, 'Failed to parse SSE payload');
