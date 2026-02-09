@@ -88,7 +88,7 @@ const buildSystemPrompt = () =>
 const buildResponseInput = (messages) =>
   messages.map((message) => ({
     role: message.role,
-    content: [{ type: 'input_text', text: message.content }],
+    content: message.content,
   }));
 
 const attachTranscript = (state, speaker, text) => {
@@ -429,29 +429,19 @@ export const attachTwilioStreamServer = (server) => {
           input: [
             {
               role: 'system',
-              content: [
-                {
-                  type: 'input_text',
-                  text:
-                    'You summarize debt negotiation calls into JSON. Use the provided schema only.',
-                },
-              ],
+              content:
+                'You summarize debt negotiation calls into JSON. Use the provided schema only.',
             },
             {
               role: 'user',
-              content: [
+              content: JSON.stringify(
                 {
-                  type: 'input_text',
-                  text: JSON.stringify(
-                    {
-                      transcript: state.transcript,
-                      events: state.events,
-                    },
-                    null,
-                    2
-                  ),
+                  transcript: state.transcript,
+                  events: state.events,
                 },
-              ],
+                null,
+                2
+              ),
             },
           ],
           text: {
