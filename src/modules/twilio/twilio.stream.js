@@ -282,11 +282,14 @@ export const attachTwilioStreamServer = (server) => {
         const resampled = resamplePcm16(pcmBuffer, sampleRate, TWILIO_SAMPLE_RATE);
         const mulaw = pcm16ToMulaw(resampled);
         sendAudioToTwilio(mulaw, generationId);
-      } catch (error) {
-        logger.error({ error }, 'Failed to synthesize speech');
-      } finally {
-        state.isTtsPlaying = false;
-        processTtsQueue();
+        } catch (error) {
+          logger.error(
+            { err: error, errorMessage: error?.message },
+            'Failed to synthesize speech'
+          );
+        } finally {
+          state.isTtsPlaying = false;
+          processTtsQueue();
       }
     };
 
@@ -348,9 +351,9 @@ export const attachTwilioStreamServer = (server) => {
             state.userBuffer = `${state.userBuffer} ${text}`.trim();
           }
         })
-        .catch((error) => {
-          logger.error({ error }, 'STT chunk failed');
-        });
+          .catch((error) => {
+            logger.error({ err: error, errorMessage: error?.message }, 'STT chunk failed');
+          });
     };
 
     const flushSpeechBuffer = () => {
@@ -454,9 +457,12 @@ export const attachTwilioStreamServer = (server) => {
             logger.warn({ error }, 'Failed to parse summary JSON');
           }
         }
-      } catch (error) {
-        logger.error({ error }, 'Failed to generate call summary');
-      }
+        } catch (error) {
+          logger.error(
+            { err: error, errorMessage: error?.message },
+            'Failed to generate call summary'
+          );
+        }
 
       try {
         const payload = buildSummaryPayload(state);
