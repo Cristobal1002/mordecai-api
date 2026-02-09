@@ -68,6 +68,8 @@ const VAD_THRESHOLD = Number(process.env.TWILIO_VAD_THRESHOLD) || 500;
 const VAD_SILENCE_MS = Number(process.env.TWILIO_VAD_SILENCE_MS) || 600;
 const BARGE_IN_MS = Number(process.env.TWILIO_BARGE_IN_MS) || 200;
 const TEXT_CHUNK_MIN_CHARS = Number(process.env.TWILIO_TTS_CHUNK_MIN_CHARS) || 120;
+const UTTERANCE_TIMEOUT_MS =
+  Number(process.env.TWILIO_UTTERANCE_TIMEOUT_MS) || 800;
 
 const parseJson = (payload) => {
   try {
@@ -201,6 +203,7 @@ export const attachTwilioStreamServer = (server) => {
       isTtsPlaying: false,
       ttsGeneration: 0,
       isUserSpeaking: false,
+      finalizeTimer: null,
       openingSent: false,
       finalized: false,
     };
@@ -332,7 +335,19 @@ export const attachTwilioStreamServer = (server) => {
       }
     };
 
+    const scheduleFinalize = () => {
+      if (state.finalizeTimer) clearTimeout(state.finalizeTimer);
+      state.finalizeTimer = setTimeout(() => {
+        state.finalizeTimer = null;
+        finalizeUserUtterance();
+      }, UTTERANCE_TIMEOUT_MS);
+    };
+
     const finalizeUserUtterance = () => {
+      if (state.finalizeTimer) {
+        clearTimeout(state.finalizeTimer);
+        state.finalizeTimer = null;
+      }
       state.sttChain = state.sttChain.then(() => {
         const utterance = state.userBuffer.trim();
         if (!utterance) return;
@@ -368,6 +383,7 @@ export const attachTwilioStreamServer = (server) => {
           });
           if (text?.trim()) {
             state.userBuffer = `${state.userBuffer} ${text}`.trim();
+            scheduleFinalize();
           }
         })
           .catch((error) => {
