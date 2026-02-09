@@ -6,12 +6,13 @@ import { logger } from './src/utils/logger.js';
 
 process.on('uncaughtException', (err) => {
   logger.fatal({ err }, 'Uncaught Exception');
-  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error({ reason, promise }, 'Unhandled Rejection');
-  process.exit(1);
+  logger.error(
+    { err: reason, errorMessage: reason?.message, promise },
+    'Unhandled Rejection'
+  );
 });
 
 startServer().catch((error) => {

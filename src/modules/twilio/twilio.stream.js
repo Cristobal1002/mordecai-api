@@ -63,6 +63,7 @@ const TTS_FORMAT = process.env.OPENAI_TTS_FORMAT || 'pcm';
 const TTS_SAMPLE_RATE = Number(process.env.OPENAI_TTS_SAMPLE_RATE) || 24000;
 
 const STT_CHUNK_MS = Number(process.env.TWILIO_STT_CHUNK_MS) || 600;
+const STT_MIN_MS = Number(process.env.TWILIO_STT_MIN_MS) || 150;
 const VAD_THRESHOLD = Number(process.env.TWILIO_VAD_THRESHOLD) || 500;
 const VAD_SILENCE_MS = Number(process.env.TWILIO_VAD_SILENCE_MS) || 600;
 const BARGE_IN_MS = Number(process.env.TWILIO_BARGE_IN_MS) || 200;
@@ -120,17 +121,17 @@ const buildSummarySchema = () => ({
     final_state: { type: 'string', enum: DEFAULT_STATES },
     outcome: { type: 'string', enum: DEFAULT_OUTCOMES },
     summary: { type: 'string' },
-    events: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['type'],
-        properties: {
-          type: { type: 'string' },
-          amount_cents: { type: ['integer', 'null'] },
-          date: { type: ['string', 'null'] },
-          note: { type: ['string', 'null'] },
+      events: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['type', 'amount_cents', 'date', 'note'],
+          properties: {
+            type: { type: 'string' },
+            amount_cents: { type: ['integer', 'null'] },
+            date: { type: ['string', 'null'] },
+            note: { type: ['string', 'null'] },
         },
       },
     },
@@ -232,6 +233,11 @@ export const attachTwilioStreamServer = (server) => {
           );
           await sleep(TWILIO_FRAME_MS);
         }
+      }).catch((error) => {
+        logger.error(
+          { err: error, errorMessage: error?.message },
+          'TTS send chain failed'
+        );
       });
     };
 
@@ -282,11 +288,14 @@ export const attachTwilioStreamServer = (server) => {
         const resampled = resamplePcm16(pcmBuffer, sampleRate, TWILIO_SAMPLE_RATE);
         const mulaw = pcm16ToMulaw(resampled);
         sendAudioToTwilio(mulaw, generationId);
-      } catch (error) {
-        logger.error({ error }, 'Failed to synthesize speech');
-      } finally {
-        state.isTtsPlaying = false;
-        processTtsQueue();
+        } catch (error) {
+          logger.error(
+            { err: error, errorMessage: error?.message },
+            'Failed to synthesize speech'
+          );
+        } finally {
+          state.isTtsPlaying = false;
+          processTtsQueue();
       }
     };
 
@@ -330,12 +339,25 @@ export const attachTwilioStreamServer = (server) => {
         state.userBuffer = '';
         attachTranscript(state, 'user', utterance);
         messages.push({ role: 'user', content: utterance });
-        state.llmChain = state.llmChain.then(handleAssistantResponse);
+        state.llmChain = state.llmChain.then(handleAssistantResponse).catch((error) => {
+          logger.error(
+            { err: error, errorMessage: error?.message },
+            'LLM response failed'
+          );
+        });
       });
     };
 
     const enqueueTranscription = (pcmBuffer) => {
       if (!pcmBuffer.length) return;
+      const durationMs = (pcmBuffer.length / 2 / TWILIO_SAMPLE_RATE) * 1000;
+      if (durationMs < STT_MIN_MS) {
+        logger.debug(
+          { durationMs: Math.round(durationMs) },
+          'Skipping STT chunk (too short)'
+        );
+        return;
+      }
       const wav = pcm16ToWav(pcmBuffer, TWILIO_SAMPLE_RATE, 1);
 
       state.sttChain = state.sttChain
@@ -348,9 +370,9 @@ export const attachTwilioStreamServer = (server) => {
             state.userBuffer = `${state.userBuffer} ${text}`.trim();
           }
         })
-        .catch((error) => {
-          logger.error({ error }, 'STT chunk failed');
-        });
+          .catch((error) => {
+            logger.error({ err: error, errorMessage: error?.message }, 'STT chunk failed');
+          });
     };
 
     const flushSpeechBuffer = () => {
@@ -454,9 +476,12 @@ export const attachTwilioStreamServer = (server) => {
             logger.warn({ error }, 'Failed to parse summary JSON');
           }
         }
-      } catch (error) {
-        logger.error({ error }, 'Failed to generate call summary');
-      }
+        } catch (error) {
+          logger.error(
+            { err: error, errorMessage: error?.message },
+            'Failed to generate call summary'
+          );
+        }
 
       try {
         const payload = buildSummaryPayload(state);
