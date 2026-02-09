@@ -19,14 +19,9 @@ const buildStreamUrl = () => {
   return `${wsBase}/api/${config.app.apiVersion}/twilio/stream`;
 };
 
-const buildVoiceResponse = (streamUrl, greeting) => {
-  const greetingBlock = greeting
-    ? `<Say voice="alice">${escapeXml(greeting)}</Say>`
-    : '';
-
+const buildVoiceResponse = (streamUrl) => {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  ${greetingBlock}
   <Connect>
     <Stream url="${escapeXml(streamUrl)}" />
   </Connect>
@@ -44,12 +39,7 @@ export const twilioController = {
       });
     }
 
-    const greeting =
-      process.env.TWILIO_VOICE_GREETING ||
-      process.env.TWILIO_VOICE_TEST_MESSAGE ||
-      '';
-
     res.type('text/xml');
-    return res.status(200).send(buildVoiceResponse(streamUrl, greeting));
+    return res.status(200).send(buildVoiceResponse(streamUrl));
   },
 };

@@ -33,15 +33,19 @@ const DEFAULT_INSTRUCTIONS = [
   'The debtor owes $5,000.',
   `You are speaking with ${DEFAULT_DEBTOR_NAME}.`,
   'Do not ask for the debtor name or identity confirmation; assume identity is confirmed.',
+  'Do not say you are an AI or say "this is a Mordecai call".',
   'Be concise, professional, and empathetic.',
   'Use the name once in the initial greeting, then avoid repeating it.',
+  'Do not include markdown, labels, or stage headings in your replies.',
+  'If the user response is unclear, ask one short clarifying question.',
   'Follow negotiation states and record outcomes.',
 ].join(' ');
 
 const buildOpeningPrompt = () =>
   process.env.OPENAI_LLM_OPENING_PROMPT ||
-  `Start the call with a short greeting using the name ${DEFAULT_DEBTOR_NAME}. ` +
-    'Mention the $5,000 balance and ask if now is a good time to discuss repayment options.';
+  `Greet ${DEFAULT_DEBTOR_NAME} briefly. ` +
+    'Mention the $5,000 balance and ask if now is a good time to discuss repayment options. ' +
+    'Do not mention the company name or that this is an AI.';
 
 const DEFAULT_STATES = [
   'OPENING',
