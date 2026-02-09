@@ -87,11 +87,24 @@ const buildSystemPrompt = () =>
     ', '
   )}. Outcomes: ${DEFAULT_OUTCOMES.join(', ')}.`;
 
+const STATE_REGEX = new RegExp(`\\b(${DEFAULT_STATES.join('|')})\\b`, 'gi');
+
 const buildResponseInput = (messages) =>
   messages.map((message) => ({
     role: message.role,
     content: message.content,
   }));
+
+const sanitizeAssistantText = (text) => {
+  if (!text) return '';
+  let cleaned = text;
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1');
+  cleaned = cleaned.replace(STATE_REGEX, '');
+  cleaned = cleaned.replace(/Outcome:\s*[A-Z_]+/gi, '');
+  cleaned = cleaned.replace(/\[[^\]]+\]/g, '');
+  cleaned = cleaned.replace(/\s{2,}/g, ' ').replace(/\n{2,}/g, '\n');
+  return cleaned.trim();
+};
 
 const attachTranscript = (state, speaker, text) => {
   const cleaned = text?.trim();
@@ -320,18 +333,25 @@ export const attachTwilioStreamServer = (server) => {
         const chunk = splitAssistantChunk(state.assistantBuffer);
         if (chunk) {
           state.assistantBuffer = state.assistantBuffer.slice(chunk.length).trimStart();
-          queueTts(chunk);
+          const cleanedChunk = sanitizeAssistantText(chunk);
+          if (cleanedChunk) {
+            queueTts(cleanedChunk);
+          }
         }
       });
 
       if (state.assistantBuffer.trim()) {
-        queueTts(state.assistantBuffer.trim());
+        const cleanedChunk = sanitizeAssistantText(state.assistantBuffer.trim());
+        if (cleanedChunk) {
+          queueTts(cleanedChunk);
+        }
         state.assistantBuffer = '';
       }
 
-      if (state.assistantFullText.trim()) {
-        attachTranscript(state, 'assistant', state.assistantFullText);
-        messages.push({ role: 'assistant', content: state.assistantFullText.trim() });
+      const cleanedFull = sanitizeAssistantText(state.assistantFullText);
+      if (cleanedFull) {
+        attachTranscript(state, 'assistant', cleanedFull);
+        messages.push({ role: 'assistant', content: cleanedFull });
       }
     };
 

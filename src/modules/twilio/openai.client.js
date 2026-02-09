@@ -131,17 +131,19 @@ export const streamChatResponse = async (payload, onDelta) => {
   }
 
   let hasOutput = false;
+  let sawDelta = false;
   await parseSseStream(response.body, async (event) => {
     if (event.type === 'response.output_text.delta') {
       const delta = event.delta || '';
       if (delta) {
         hasOutput = true;
+        sawDelta = true;
         await onDelta(delta);
       }
     }
     if (event.type === 'response.output_text.done') {
       const text = event.text || '';
-      if (text) {
+      if (text && !sawDelta) {
         hasOutput = true;
         await onDelta(text);
       }
