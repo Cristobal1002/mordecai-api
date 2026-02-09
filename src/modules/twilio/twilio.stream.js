@@ -120,17 +120,17 @@ const buildSummarySchema = () => ({
     final_state: { type: 'string', enum: DEFAULT_STATES },
     outcome: { type: 'string', enum: DEFAULT_OUTCOMES },
     summary: { type: 'string' },
-    events: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['type'],
-        properties: {
-          type: { type: 'string' },
-          amount_cents: { type: ['integer', 'null'] },
-          date: { type: ['string', 'null'] },
-          note: { type: ['string', 'null'] },
+      events: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['type', 'amount_cents', 'date', 'note'],
+          properties: {
+            type: { type: 'string' },
+            amount_cents: { type: ['integer', 'null'] },
+            date: { type: ['string', 'null'] },
+            note: { type: ['string', 'null'] },
         },
       },
     },
