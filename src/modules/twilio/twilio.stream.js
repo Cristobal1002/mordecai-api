@@ -37,6 +37,7 @@ const DEFAULT_INSTRUCTIONS = [
   'Be concise, professional, and empathetic.',
   'Use the name once in the initial greeting, then avoid repeating it.',
   'Do not include markdown, labels, or stage headings in your replies.',
+  'Respond in English only.',
   'If the user response is unclear, ask one short clarifying question.',
   'Follow negotiation states and record outcomes.',
 ].join(' ');
@@ -44,8 +45,8 @@ const DEFAULT_INSTRUCTIONS = [
 const buildOpeningPrompt = () =>
   process.env.OPENAI_LLM_OPENING_PROMPT ||
   `Greet ${DEFAULT_DEBTOR_NAME} briefly. ` +
-    'Mention the $5,000 balance and ask if now is a good time to discuss repayment options. ' +
-    'Do not mention the company name or that this is an AI.';
+  'Mention the $5,000 balance and ask if now is a good time to discuss repayment options. ' +
+  'Do not mention the company name or that this is an AI.';
 
 const DEFAULT_STATES = [
   'OPENING',
@@ -69,6 +70,7 @@ const DEFAULT_OUTCOMES = [
 ];
 
 const STT_MODEL = process.env.OPENAI_STT_MODEL || 'gpt-4o-transcribe';
+const STT_LANGUAGE = process.env.OPENAI_STT_LANGUAGE || 'en';
 const STT_STREAM = process.env.OPENAI_STT_STREAM !== 'false';
 const LLM_MODEL = process.env.OPENAI_LLM_MODEL || 'gpt-4o';
 const TTS_MODEL = process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts';
@@ -150,17 +152,17 @@ const buildSummarySchema = () => ({
     final_state: { type: 'string', enum: DEFAULT_STATES },
     outcome: { type: 'string', enum: DEFAULT_OUTCOMES },
     summary: { type: 'string' },
-      events: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['type', 'amount_cents', 'date', 'note'],
-          properties: {
-            type: { type: 'string' },
-            amount_cents: { type: ['integer', 'null'] },
-            date: { type: ['string', 'null'] },
-            note: { type: ['string', 'null'] },
+    events: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['type', 'amount_cents', 'date', 'note'],
+        properties: {
+          type: { type: 'string' },
+          amount_cents: { type: ['integer', 'null'] },
+          date: { type: ['string', 'null'] },
+          note: { type: ['string', 'null'] },
         },
       },
     },
@@ -315,14 +317,14 @@ export const attachTwilioStreamServer = (server) => {
         const resampled = resamplePcm16(pcmBuffer, sampleRate, TWILIO_SAMPLE_RATE);
         const mulaw = pcm16ToMulaw(resampled);
         sendAudioToTwilio(mulaw, generationId);
-        } catch (error) {
-          logger.error(
-            { err: error, errorMessage: error?.message },
-            'Failed to synthesize speech'
-          );
-        } finally {
-          state.isTtsPlaying = false;
-          processTtsQueue();
+      } catch (error) {
+        logger.error(
+          { err: error, errorMessage: error?.message },
+          'Failed to synthesize speech'
+        );
+      } finally {
+        state.isTtsPlaying = false;
+        processTtsQueue();
       }
     };
 
@@ -382,6 +384,12 @@ export const attachTwilioStreamServer = (server) => {
       state.sttChain = state.sttChain.then(() => {
         const utterance = state.userBuffer.trim();
         if (!utterance) return;
+        const wordCount = utterance.split(/\s+/).filter(Boolean).length;
+        if (wordCount < 2) {
+          logger.debug({ wordCount, utterance }, 'Skipping utterance (too short)');
+          state.userBuffer = '';
+          return;
+        }
         state.userBuffer = '';
         attachTranscript(state, 'user', utterance);
         messages.push({ role: 'user', content: utterance });
@@ -410,6 +418,7 @@ export const attachTwilioStreamServer = (server) => {
         .then(async () => {
           const text = await transcribeAudio(wav, {
             model: STT_MODEL,
+            language: STT_LANGUAGE,
             stream: STT_STREAM,
           });
           if (text?.trim()) {
@@ -417,9 +426,9 @@ export const attachTwilioStreamServer = (server) => {
             scheduleFinalize();
           }
         })
-          .catch((error) => {
-            logger.error({ err: error, errorMessage: error?.message }, 'STT chunk failed');
-          });
+        .catch((error) => {
+          logger.error({ err: error, errorMessage: error?.message }, 'STT chunk failed');
+        });
     };
 
     const flushSpeechBuffer = () => {
@@ -513,12 +522,12 @@ export const attachTwilioStreamServer = (server) => {
             logger.warn({ error }, 'Failed to parse summary JSON');
           }
         }
-        } catch (error) {
-          logger.error(
-            { err: error, errorMessage: error?.message },
-            'Failed to generate call summary'
-          );
-        }
+      } catch (error) {
+        logger.error(
+          { err: error, errorMessage: error?.message },
+          'Failed to generate call summary'
+        );
+      }
 
       try {
         const payload = buildSummaryPayload(state);
