@@ -23,15 +23,25 @@ const TWILIO_SAMPLE_RATE = 8000;
 const TWILIO_FRAME_BYTES = 160;
 const TWILIO_FRAME_MS = 20;
 
+const DEFAULT_DEBTOR_NAME =
+  process.env.TWILIO_DEBTOR_NAME ||
+  process.env.DEBTOR_NAME ||
+  'Andres Cristobal Sosa';
+
 const DEFAULT_INSTRUCTIONS = [
   'You are a debt negotiation agent for Mordecai AI.',
-  'The debtor owes $5,000. Start the call with a short greeting and begin negotiation.',
+  'The debtor owes $5,000.',
+  `You are speaking with ${DEFAULT_DEBTOR_NAME}.`,
+  'Do not ask for the debtor name or identity confirmation; assume identity is confirmed.',
   'Be concise, professional, and empathetic.',
+  'Use the name once in the initial greeting, then avoid repeating it.',
   'Follow negotiation states and record outcomes.',
 ].join(' ');
 
-const DEFAULT_OPENING_PROMPT =
-  'Greet the debtor briefly and start the negotiation about the $5,000 balance.';
+const buildOpeningPrompt = () =>
+  process.env.OPENAI_LLM_OPENING_PROMPT ||
+  `Start the call with a short greeting using the name ${DEFAULT_DEBTOR_NAME}. ` +
+    'Mention the $5,000 balance and ask if now is a good time to discuss repayment options.';
 
 const DEFAULT_STATES = [
   'OPENING',
@@ -221,10 +231,7 @@ export const attachTwilioStreamServer = (server) => {
       finalized: false,
     };
 
-    const messages = [
-      { role: 'system', content: buildSystemPrompt() },
-      { role: 'assistant', content: DEFAULT_OPENING_PROMPT },
-    ];
+    const messages = [{ role: 'system', content: buildSystemPrompt() }];
 
     const sendAudioToTwilio = (mulawBuffer, generationId) => {
       if (!mulawBuffer || !state.streamSid) return;
@@ -540,8 +547,14 @@ export const attachTwilioStreamServer = (server) => {
         );
         if (!state.openingSent) {
           state.openingSent = true;
-          attachTranscript(state, 'assistant', DEFAULT_OPENING_PROMPT);
-          queueTts(DEFAULT_OPENING_PROMPT);
+          const openingPrompt = buildOpeningPrompt();
+          messages.push({ role: 'user', content: openingPrompt });
+          state.llmChain = state.llmChain.then(handleAssistantResponse).catch((error) => {
+            logger.error(
+              { err: error, errorMessage: error?.message },
+              'LLM response failed'
+            );
+          });
         }
         return;
       }
