@@ -83,14 +83,14 @@ const TTS_VOICE = process.env.OPENAI_TTS_VOICE || 'alloy';
 const TTS_FORMAT = process.env.OPENAI_TTS_FORMAT || 'pcm';
 const TTS_SAMPLE_RATE = Number(process.env.OPENAI_TTS_SAMPLE_RATE) || 24000;
 
-const STT_CHUNK_MS = Number(process.env.TWILIO_STT_CHUNK_MS) || 600;
+const STT_CHUNK_MS = Number(process.env.TWILIO_STT_CHUNK_MS) || 700;
 const STT_MIN_MS = Number(process.env.TWILIO_STT_MIN_MS) || 150;
 const VAD_THRESHOLD = Number(process.env.TWILIO_VAD_THRESHOLD) || 500;
-const VAD_SILENCE_MS = Number(process.env.TWILIO_VAD_SILENCE_MS) || 600;
+const VAD_SILENCE_MS = Number(process.env.TWILIO_VAD_SILENCE_MS) || 450;
 const BARGE_IN_MS = Number(process.env.TWILIO_BARGE_IN_MS) || 200;
-const TEXT_CHUNK_MIN_CHARS = Number(process.env.TWILIO_TTS_CHUNK_MIN_CHARS) || 120;
+const TEXT_CHUNK_MIN_CHARS = Number(process.env.TWILIO_TTS_CHUNK_MIN_CHARS) || 80;
 const UTTERANCE_TIMEOUT_MS =
-  Number(process.env.TWILIO_UTTERANCE_TIMEOUT_MS) || 800;
+  Number(process.env.TWILIO_UTTERANCE_TIMEOUT_MS) || 450;
 const ASSISTANT_DEDUP_MS =
   Number(process.env.TWILIO_ASSISTANT_DEDUP_MS) || 2000;
 
@@ -183,6 +183,71 @@ const splitAssistantChunk = (buffer) => {
   if (!match) return null;
 
   return match[0].trim();
+};
+
+const normalizeUserText = (text) => {
+  if (!text) return '';
+  let normalized = text.replace(/\b([A-Za-z]{2,})(\1)\b/g, '$1 $1');
+  normalized = normalized.replace(/\s+/g, ' ').trim();
+  const tokens = normalized.split(' ').filter(Boolean);
+  const deduped = [];
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const last = deduped[deduped.length - 1];
+    if (last && last.toLowerCase() === token.toLowerCase()) {
+      continue;
+    }
+    deduped.push(token);
+    if (deduped.length >= 4) {
+      const lastTwo = deduped.slice(-2).map((t) => t.toLowerCase()).join(' ');
+      const prevTwo = deduped.slice(-4, -2).map((t) => t.toLowerCase()).join(' ');
+      if (lastTwo === prevTwo) {
+        deduped.splice(-2, 2);
+      }
+    }
+  }
+
+  return deduped.join(' ').trim();
+};
+
+const removeOverlap = (existing, incoming) => {
+  if (!existing || !incoming) return incoming;
+  const toTokens = (value) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .filter(Boolean);
+
+  const existingTokens = toTokens(existing);
+  const incomingTokens = toTokens(incoming);
+  const maxOverlap = Math.min(6, existingTokens.length, incomingTokens.length);
+  let overlapCount = 0;
+
+  for (let size = maxOverlap; size >= 1; size -= 1) {
+    const tail = existingTokens.slice(-size).join(' ');
+    const head = incomingTokens.slice(0, size).join(' ');
+    if (tail && tail === head) {
+      overlapCount = size;
+      break;
+    }
+  }
+
+  if (!overlapCount) return incoming;
+  const originalTokens = incoming.split(' ').filter(Boolean);
+  return originalTokens.slice(overlapCount).join(' ').trim();
+};
+
+const mergeUserText = (existing, incoming) => {
+  if (!incoming) return existing;
+  const trimmed = normalizeUserText(incoming);
+  if (!trimmed) return existing;
+  const withoutOverlap = normalizeUserText(removeOverlap(existing, trimmed));
+  const combined = [existing, withoutOverlap].filter(Boolean).join(' ').trim();
+  return normalizeUserText(combined);
 };
 
 export const attachTwilioStreamServer = (server) => {
@@ -443,7 +508,7 @@ export const attachTwilioStreamServer = (server) => {
             stream: STT_STREAM,
           });
           if (text?.trim()) {
-            state.userBuffer = `${state.userBuffer} ${text}`.trim();
+            state.userBuffer = mergeUserText(state.userBuffer, text);
             scheduleFinalize();
           }
         })
