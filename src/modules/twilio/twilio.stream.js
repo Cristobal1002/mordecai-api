@@ -71,6 +71,11 @@ const DEFAULT_OUTCOMES = [
 
 const STT_MODEL = process.env.OPENAI_STT_MODEL || 'gpt-4o-transcribe';
 const STT_LANGUAGE = process.env.OPENAI_STT_LANGUAGE || 'en';
+const STT_PROMPT =
+  process.env.OPENAI_STT_PROMPT ||
+  `Debt collection phone call. Debtor name: ${DEFAULT_DEBTOR_NAME}. ` +
+    'Common terms: balance, repayment, payment plan, settlement, dollars, ' +
+    'thousand, hundred, today, tomorrow, next month, yes, no.';
 const STT_STREAM = process.env.OPENAI_STT_STREAM !== 'false';
 const LLM_MODEL = process.env.OPENAI_LLM_MODEL || 'gpt-4o';
 const TTS_MODEL = process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts';
@@ -86,6 +91,8 @@ const BARGE_IN_MS = Number(process.env.TWILIO_BARGE_IN_MS) || 200;
 const TEXT_CHUNK_MIN_CHARS = Number(process.env.TWILIO_TTS_CHUNK_MIN_CHARS) || 120;
 const UTTERANCE_TIMEOUT_MS =
   Number(process.env.TWILIO_UTTERANCE_TIMEOUT_MS) || 800;
+const ASSISTANT_DEDUP_MS =
+  Number(process.env.TWILIO_ASSISTANT_DEDUP_MS) || 2000;
 
 const parseJson = (payload) => {
   try {
@@ -221,6 +228,10 @@ export const attachTwilioStreamServer = (server) => {
       assistantBuffer: '',
       assistantFullText: '',
       userBuffer: '',
+      lastAssistantText: '',
+      lastAssistantAt: 0,
+      lastAssistantTranscript: '',
+      lastAssistantTranscriptAt: 0,
       speechMs: 0,
       silenceMs: 0,
       pendingSpeechPcm: [],
@@ -278,6 +289,15 @@ export const attachTwilioStreamServer = (server) => {
 
     const queueTts = (text) => {
       if (!text) return;
+      const now = Date.now();
+      if (
+        text === state.lastAssistantText &&
+        now - state.lastAssistantAt < ASSISTANT_DEDUP_MS
+      ) {
+        return;
+      }
+      state.lastAssistantText = text;
+      state.lastAssistantAt = now;
       state.ttsQueue.push(text);
       if (!state.isTtsPlaying) {
         state.isTtsPlaying = true;
@@ -362,9 +382,15 @@ export const attachTwilioStreamServer = (server) => {
       }
 
       const cleanedFull = sanitizeAssistantText(state.assistantFullText);
-      if (cleanedFull) {
+      if (
+        cleanedFull &&
+        (cleanedFull !== state.lastAssistantTranscript ||
+          Date.now() - state.lastAssistantTranscriptAt >= ASSISTANT_DEDUP_MS)
+      ) {
         attachTranscript(state, 'assistant', cleanedFull);
         messages.push({ role: 'assistant', content: cleanedFull });
+        state.lastAssistantTranscript = cleanedFull;
+        state.lastAssistantTranscriptAt = Date.now();
       }
     };
 
@@ -413,6 +439,7 @@ export const attachTwilioStreamServer = (server) => {
           const text = await transcribeAudio(wav, {
             model: STT_MODEL,
             language: STT_LANGUAGE,
+            prompt: STT_PROMPT,
             stream: STT_STREAM,
           });
           if (text?.trim()) {

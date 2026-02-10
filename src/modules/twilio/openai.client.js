@@ -71,6 +71,7 @@ const parseSseStream = async (stream, onEvent) => {
 export const transcribeAudio = async (wavBuffer, options) => {
   const model = options?.model || 'gpt-4o-transcribe';
   const language = options?.language;
+  const prompt = options?.prompt;
   const stream = options?.stream === true;
 
   const formData = new FormData();
@@ -78,6 +79,7 @@ export const transcribeAudio = async (wavBuffer, options) => {
   formData.append('response_format', 'json');
   if (stream) formData.append('stream', 'true');
   if (language) formData.append('language', language);
+  if (prompt) formData.append('prompt', prompt);
   formData.append('file', new Blob([wavBuffer], { type: 'audio/wav' }), 'audio.wav');
 
   const response = await fetch(`${OPENAI_BASE_URL}/v1/audio/transcriptions`, {
