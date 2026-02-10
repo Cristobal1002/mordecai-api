@@ -384,12 +384,6 @@ export const attachTwilioStreamServer = (server) => {
       state.sttChain = state.sttChain.then(() => {
         const utterance = state.userBuffer.trim();
         if (!utterance) return;
-        const wordCount = utterance.split(/\s+/).filter(Boolean).length;
-        if (wordCount < 2) {
-          logger.debug({ wordCount, utterance }, 'Skipping utterance (too short)');
-          state.userBuffer = '';
-          return;
-        }
         state.userBuffer = '';
         attachTranscript(state, 'user', utterance);
         messages.push({ role: 'user', content: utterance });
