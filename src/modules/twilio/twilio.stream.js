@@ -7,6 +7,14 @@ const resolveEngine = () => (process.env.TWILIO_ENGINE || 'realtime').toLowerCas
 export const attachTwilioStreamServer = (server) => {
   const engine = resolveEngine();
 
+  if (engine === 'eleven_register') {
+    logger.info(
+      { engine },
+      'Attaching Twilio stream engine (no-op, handled by ElevenLabs register_call)'
+    );
+    return null;
+  }
+
   if (engine === 'realtime') {
     logger.info({ engine }, 'Attaching Twilio stream engine');
     return attachTwilioRealtimeEngine(server);
