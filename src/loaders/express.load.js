@@ -35,7 +35,16 @@ export const loadExpress = (app) => {
   );
 
   // Body parsers
-  app.use(express.json({ limit: '20mb' }));
+  app.use(
+    express.json({
+      limit: '20mb',
+      verify: (req, _res, buf) => {
+        if (buf?.length) {
+          req.rawBody = buf.toString('utf8');
+        }
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
   // Rate limiting - más estricto para prevenir abuso
