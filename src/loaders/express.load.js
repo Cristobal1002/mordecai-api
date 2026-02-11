@@ -63,8 +63,13 @@ export const loadExpress = (app) => {
       });
     },
     skip: (req) => {
-      // No aplicar rate limiting a health checks ni al WebSocket stream de Twilio
-      return req.url.includes('/health') || req.url.includes('/twilio/stream');
+      // No aplicar rate limiting a health checks, WebSocket stream de Twilio
+      // ni webhooks de post-llamada de ElevenLabs.
+      return (
+        req.url.includes('/health') ||
+        req.url.includes('/twilio/stream') ||
+        req.url.includes('/eleven/post-call')
+      );
     },
   });
 
