@@ -73,8 +73,7 @@ const STT_MODEL = process.env.OPENAI_STT_MODEL || 'gpt-4o-transcribe';
 const STT_LANGUAGE = process.env.OPENAI_STT_LANGUAGE || 'en';
 const STT_PROMPT =
   process.env.OPENAI_STT_PROMPT ||
-  `Debt collection phone call. Debtor name: ${DEFAULT_DEBTOR_NAME}. ` +
-    'Common terms: balance, repayment, payment plan, settlement, dollars, ' +
+  'Keywords: balance, payment, repayment, installment, settlement, dollars, ' +
     'thousand, hundred, today, tomorrow, next month, yes, no.';
 const STT_STREAM = process.env.OPENAI_STT_STREAM !== 'false';
 const LLM_MODEL = process.env.OPENAI_LLM_MODEL || 'gpt-4o';
@@ -93,6 +92,9 @@ const UTTERANCE_TIMEOUT_MS =
   Number(process.env.TWILIO_UTTERANCE_TIMEOUT_MS) || 450;
 const ASSISTANT_DEDUP_MS =
   Number(process.env.TWILIO_ASSISTANT_DEDUP_MS) || 2000;
+const ECHO_SUPPRESS = process.env.TWILIO_ECHO_SUPPRESS !== 'false';
+const ECHO_SUPPRESS_MULTIPLIER =
+  Number(process.env.TWILIO_ECHO_SUPPRESS_MULTIPLIER) || 1.15;
 
 const parseJson = (payload) => {
   try {
@@ -529,6 +531,14 @@ export const attachTwilioStreamServer = (server) => {
       const frameMs = mulawBuffer.length / 8;
       const pcmBuffer = mulawToPcm16(mulawBuffer);
       const level = rmsLevel(pcmBuffer);
+      if (
+        ECHO_SUPPRESS &&
+        state.isTtsPlaying &&
+        !state.isUserSpeaking &&
+        level < VAD_THRESHOLD * ECHO_SUPPRESS_MULTIPLIER
+      ) {
+        return;
+      }
       const isSpeech = level >= VAD_THRESHOLD;
 
       if (isSpeech) {

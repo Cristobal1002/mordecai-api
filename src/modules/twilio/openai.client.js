@@ -98,12 +98,20 @@ export const transcribeAudio = async (wavBuffer, options) => {
       throw new Error('Transcription stream is empty');
     }
     let transcript = '';
+    let sawDelta = false;
     await parseSseStream(response.body, async (event) => {
       if (event.type === 'transcript.text.delta') {
-        transcript += event.delta || '';
+        const delta = event.delta || '';
+        if (delta) {
+          sawDelta = true;
+          transcript += delta;
+        }
       }
       if (event.type === 'transcript.text.done') {
-        transcript += event.text || '';
+        const text = event.text || '';
+        if (text && !sawDelta) {
+          transcript += text;
+        }
       }
     });
     return transcript;
