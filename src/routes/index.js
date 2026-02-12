@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import health from './health.route.js';
-// Importar módulos aquí
+
 import exampleRoutes from '../modules/example/example.routes.js';
 import tenantRoutes from '../modules/tenants/tenant.routes.js';
 import flowPolicyRoutes from '../modules/flow-policies/flow-policy.routes.js';
 import importRoutes from '../modules/imports/import.routes.js';
-import workRoutes from '../modules/work/work.routes.js';
 import debtorRoutes from '../modules/debtors/debtor.routes.js';
 import debtCaseRoutes from '../modules/debt-cases/debt-case.routes.js';
 import authRoutes from '../modules/auth/auth.routes.js';
@@ -27,7 +26,6 @@ const routes = (app) => {
   router.use('/invitations', invitationRoutes);
   router.use('/tenants', flowPolicyRoutes);
   router.use('/import-batches', importRoutes);
-  router.use('/work', workRoutes);
   router.use('/debtors', debtorRoutes);
   router.use('/debt-cases', debtCaseRoutes);
   router.use('/twilio', twilioRoutes);
