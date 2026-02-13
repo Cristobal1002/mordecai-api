@@ -12,7 +12,8 @@ import authRoutes from '../modules/auth/auth.routes.js';
 import membershipRoutes from '../modules/memberships/membership.routes.js';
 import invitationRoutes from '../modules/invitations/invitation.routes.js';
 import twilioRoutes from '../modules/twilio/twilio.routes.js';
-import elevenlabsRoutes from '../modules/elevenlabs/elevenlabs.routes.js';
+import elevenRoutes from '../modules/elevenlabs/eleven.routes.js';
+import demoRoutes from '../modules/demo/demo.routes.js';
 
 import { config } from '../config/index.js';
 
@@ -32,7 +33,8 @@ const routes = (app) => {
   router.use('/debtors', debtorRoutes);
   router.use('/debt-cases', debtCaseRoutes);
   router.use('/twilio', twilioRoutes);
-  router.use('/eleven', elevenlabsRoutes);
+  router.use('/eleven', elevenRoutes);
+  router.use('/demo', demoRoutes);
 
   app.use(`/api/${config.app.apiVersion}`, router);
 };

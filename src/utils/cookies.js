@@ -46,7 +46,7 @@ const normalizeSameSite = (value) => {
 
 export const getCookieOptions = () => {
   const isProd = process.env.NODE_ENV === 'production';
-  const sameSite = normalizeSameSite(process.env.AUTH_COOKIE_SAMESITE);
+  const sameSite = normalizeSameSite(process.env.AUTH_COOKIE_SAMESITE || "lax");
   const secure = sameSite === 'none'
     ? true
     : parseBoolean(process.env.AUTH_COOKIE_SECURE, isProd);
