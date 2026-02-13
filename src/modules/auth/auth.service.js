@@ -430,6 +430,11 @@ export const authService = {
   },
 
   forgotPassword: async ({ email }) => {
+    const { hasNative, socialProvider } = await getAuthMethodByEmail(email);
+    if (socialProvider && !hasNative) {
+      throw new UseSocialLoginError(socialProvider);
+    }
+
     const command = new ForgotPasswordCommand({
       ClientId: clientId,
       Username: email,
@@ -442,11 +447,24 @@ export const authService = {
         delivery: result.CodeDeliveryDetails || null,
       };
     } catch (error) {
+      const msg = error?.message || '';
+      if (
+        msg.includes('Cannot reset password') ||
+        msg.includes('no registered/verified email')
+      ) {
+        const { socialProvider: provider } = await getAuthMethodByEmail(email);
+        throw new UseSocialLoginError(provider || 'Google or Microsoft');
+      }
       mapCognitoError(error);
     }
   },
 
   resetPassword: async ({ email, code, password }) => {
+    const { hasNative, socialProvider } = await getAuthMethodByEmail(email);
+    if (socialProvider && !hasNative) {
+      throw new UseSocialLoginError(socialProvider);
+    }
+
     const command = new ConfirmForgotPasswordCommand({
       ClientId: clientId,
       Username: email,
