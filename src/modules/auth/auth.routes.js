@@ -3,6 +3,7 @@ import { validateRequest } from '../../middlewares/validate-request.middleware.j
 import { requireAuth, requireCsrf } from '../../middlewares/index.js';
 import { authController } from './auth.controller.js';
 import {
+  checkAuthMethodValidator,
   confirmValidator,
   forgotValidator,
   loginValidator,
@@ -13,6 +14,7 @@ import {
   registerValidator,
   resendConfirmValidator,
   resetValidator,
+  updateMeValidator,
 } from './auth.validator.js';
 
 const router = Router();
@@ -61,6 +63,14 @@ router.post(
 // GET /api/v1/auth/csrf
 router.get('/csrf', authController.csrf);
 
+// GET /api/v1/auth/check-method?email=...
+router.get(
+  '/check-method',
+  checkAuthMethodValidator,
+  validateRequest,
+  authController.checkAuthMethod
+);
+
 // GET /api/v1/auth/oauth/start?provider=Google|Microsoft
 router.get(
   '/oauth/start',
@@ -79,5 +89,15 @@ router.get(
 
 // GET /api/v1/auth/me
 router.get('/me', requireAuth(), authController.me);
+
+// PATCH /api/v1/auth/me
+router.patch(
+  '/me',
+  requireAuth(),
+  requireCsrf(),
+  updateMeValidator,
+  validateRequest,
+  authController.updateMe
+);
 
 export default router;

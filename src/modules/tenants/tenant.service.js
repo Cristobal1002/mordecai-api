@@ -16,8 +16,16 @@ export const tenantService = {
             throw new ForbiddenError('Unauthorized');
         }
 
+        const enrichedIdentity = {
+            ...identity,
+            ...(data.fullName && { fullName: data.fullName.trim() }),
+            ...(data.phone !== undefined && data.phone !== null && {
+                phone: data.phone ? String(data.phone).trim() : null,
+            }),
+        };
+
         return await sequelize.transaction(async (transaction) => {
-            const user = await userService.ensureUserFromAuth(identity, transaction);
+            const user = await userService.ensureUserFromAuth(enrichedIdentity, transaction);
 
             if (enforceSingleTenant) {
                 const existing = await userService.countActiveMemberships(user.id, transaction);
@@ -26,9 +34,11 @@ export const tenantService = {
                 }
             }
 
+            const { name, fullName, phone, ...rest } = data;
             const tenant = await tenantRepository.create(
                 {
-                    ...data,
+                    name,
+                    ...rest,
                     status: 'active',
                 },
                 transaction

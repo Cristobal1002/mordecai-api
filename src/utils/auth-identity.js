@@ -4,6 +4,19 @@ import { decodeJwtPayload } from './jwt.js';
 const normalizeEmail = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : null;
 
+const getFullNameFromPayload = (payload) => {
+  if (!payload) return null;
+  return (
+    payload.name ||
+    (payload.given_name && payload.family_name
+      ? `${payload.given_name} ${payload.family_name}`.trim()
+      : null) ||
+    payload.given_name ||
+    payload.family_name ||
+    null
+  );
+};
+
 export const getAuthIdentity = (req) => {
   const accessPayload = req.user || {};
   const cookies = parseCookies(req.headers.cookie);
@@ -15,8 +28,12 @@ export const getAuthIdentity = (req) => {
     normalizeEmail(idPayload?.email) ||
     normalizeEmail(idPayload?.['cognito:username']) ||
     normalizeEmail(idPayload?.username);
-  const fullName = idPayload?.name || idPayload?.['given_name'] || null;
-  const phone = idPayload?.phone_number || null;
+  const fullName =
+    getFullNameFromPayload(idPayload) || getFullNameFromPayload(accessPayload);
+  const phone =
+    idPayload?.phone_number ||
+    accessPayload?.phone_number ||
+    null;
 
   return {
     sub,

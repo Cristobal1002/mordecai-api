@@ -35,3 +35,11 @@ export class BadRequestError extends CustomError {
         super(message, 400, null, "https://mordcai.com/errors/bad-request");
     }
 }
+
+/** Thrown when user tried password login but is registered with social (Google/Microsoft). */
+export class UseSocialLoginError extends CustomError {
+    constructor(provider = 'Google') {
+        const message = `You already signed up with ${provider}. Please use that method to sign in.`;
+        super(message, 401, { code: 'USE_SOCIAL_LOGIN', provider }, 'https://mordcai.com/errors/use-social-login');
+    }
+}

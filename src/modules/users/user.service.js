@@ -1,4 +1,5 @@
-import { User, TenantUser } from '../../models/index.js';
+import { User, TenantUser, Tenant } from '../../models/index.js';
+import { logger } from '../../utils/logger.js';
 
 export const userService = {
   findByCognitoSub: async (cognitoSub, transaction) => {
@@ -30,26 +31,41 @@ export const userService = {
       return null;
     }
 
+    const options = transaction ? { transaction } : undefined;
+    let existing = null;
+
     if (identity.email) {
-      const existingByEmail = await userService.findByEmail(
-        identity.email,
-        transaction
-      );
-      if (existingByEmail) {
-        return existingByEmail;
-      }
+      existing = await userService.findByEmail(identity.email, transaction);
+    }
+    if (!existing && identity.sub) {
+      existing = await userService.findByCognitoSub(identity.sub, transaction);
     }
 
-    if (identity.sub) {
-      const existing = await userService.findByCognitoSub(
-        identity.sub,
-        transaction
-      );
-      if (existing) {
-        return existing;
+    if (existing) {
+      const updates = {};
+      if (
+        identity.fullName &&
+        (!existing.fullName || String(existing.fullName).trim() === '')
+      ) {
+        updates.fullName = identity.fullName.trim();
       }
+      if (
+        identity.phone &&
+        (!existing.phone || String(existing.phone).trim() === '')
+      ) {
+        updates.phone = identity.phone.trim();
+      }
+      logger.info(
+        { identity, existingFullName: existing.fullName, existingPhone: existing.phone, updates },
+        '[User] ensureUserFromAuth: existing user, updates'
+      );
+      if (Object.keys(updates).length > 0) {
+        await existing.update(updates, options);
+      }
+      return existing;
     }
 
+    logger.info({ identity }, '[User] ensureUserFromAuth: creating new user');
     return await userService.createFromAuth(identity, transaction);
   },
 
@@ -84,6 +100,7 @@ export const userService = {
     const options = transaction ? { transaction } : undefined;
     return await TenantUser.findAll({
       where: { userId, status: 'active' },
+      include: [{ model: Tenant, as: 'tenant', attributes: ['id', 'name'] }],
       ...options,
     });
   },
@@ -94,5 +111,22 @@ export const userService = {
       where: { userId, status: 'active' },
       ...options,
     });
+  },
+
+  updateProfile: async (identity, data) => {
+    const user = await userService.getUserByAuth(identity);
+    if (!user) return null;
+
+    const updates = {};
+    if (data.fullName !== undefined && String(data.fullName).trim()) {
+      updates.fullName = data.fullName.trim();
+    }
+    if (data.phone !== undefined) {
+      updates.phone = data.phone ? String(data.phone).trim() : null;
+    }
+
+    if (Object.keys(updates).length === 0) return user;
+    await user.update(updates);
+    return user;
   },
 };

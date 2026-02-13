@@ -124,10 +124,8 @@ export const loadExpress = (app) => {
       ...(req.get('authorization') && { hasAuth: !!req.get('authorization') }),
     };
     
-    // Para rutas 404, usar nivel warn para destacarlas
-    const is404Route = req.url.includes('/auth/me') || req.url.includes('/api/v1/auth/me');
-    const logLevel = is404Route ? 'warn' : 'info';
-    const logMessage = is404Route ? 'Incoming request to non-existent route' : 'Incoming request';
+    const logLevel = 'info';
+    const logMessage = 'Incoming request';
     
     logger[logLevel](logData, logMessage);
     next();

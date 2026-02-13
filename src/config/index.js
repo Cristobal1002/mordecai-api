@@ -60,8 +60,12 @@ export const config = {
     },
   },
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: process.env.CORS_CREDENTIALS === 'true',
+    origin:
+      process.env.CORS_ORIGIN ||
+      (process.env.NODE_ENV === 'production' ? '*' : 'http://localhost:8080'),
+    credentials:
+      process.env.CORS_CREDENTIALS === 'true' ||
+      (process.env.NODE_ENV !== 'production' && !process.env.CORS_ORIGIN),
   },
   rateLimit: {
     windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000, // 1 minuto
