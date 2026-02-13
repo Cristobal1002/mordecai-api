@@ -38,11 +38,16 @@ const parseToolPayload = (body) => {
 export const elevenController = {
   postCall: async (req, res) => {
     const signatureHeader = getWebhookSignatureHeader(req);
+    const toleranceSeconds =
+      Number(process.env.ELEVENLABS_WEBHOOK_TOLERANCE_SEC) ||
+      Number(process.env.ELEVENLABS_WEBHOOK_TOLERANCE_SECONDS) ||
+      1800;
+
     const verification = verifyElevenLabsWebhook({
       signatureHeader,
       rawBody: getRawBody(req),
       secret: process.env.ELEVENLABS_WEBHOOK_SECRET,
-      toleranceSeconds: Number(process.env.ELEVENLABS_WEBHOOK_TOLERANCE_SEC) || 300,
+      toleranceSeconds,
     });
 
     if (!verification.valid) {
