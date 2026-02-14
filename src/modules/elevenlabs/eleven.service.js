@@ -51,6 +51,13 @@ const parseAmountCents = (value) => {
   return Math.round(numeric);
 };
 
+const normalizeDynamicVariableValue = (value) => {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value)) return value.map((item) => String(item)).join(',');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+};
+
 const buildCaseMetadataDynamicVariables = (meta = {}) => {
   const keys = [
     'notes',
@@ -60,13 +67,23 @@ const buildCaseMetadataDynamicVariables = (meta = {}) => {
     'property_id',
     'unit_number',
     'language',
+    'use_case',
   ];
 
-  return keys.reduce((acc, key) => {
-    if (meta[key] === null || meta[key] === undefined) return acc;
-    acc[key] = String(meta[key]);
-    return acc;
+  const acc = keys.reduce((result, key) => {
+    const normalized = normalizeDynamicVariableValue(meta[key]);
+    if (!normalized) return result;
+    result[key] = normalized;
+    return result;
   }, {});
+
+  const paymentOptions = normalizeDynamicVariableValue(meta.options);
+  if (paymentOptions) acc.payment_options = paymentOptions;
+
+  const paymentChannels = normalizeDynamicVariableValue(meta.channels);
+  if (paymentChannels) acc.payment_channels = paymentChannels;
+
+  return acc;
 };
 
 const getFlowRules = (flowPolicy) => {
