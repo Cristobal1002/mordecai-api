@@ -63,14 +63,32 @@ export const propertyManagersService = {
     const existing = await PmsConnection.findOne({
       where: { tenantId, softwareId: software.id },
     });
+
+    const targetStatus = status || 'draft';
     if (existing) {
+      const canReconnect = ['disabled', 'draft'].includes(existing.status);
+      if (canReconnect) {
+        await existing.update({
+          credentials: credentials ?? existing.credentials,
+          status: targetStatus,
+          lastError: null,
+        });
+        return await PmsConnection.findByPk(existing.id, {
+          include: [
+            {
+              association: 'software',
+              attributes: ['id', 'key', 'name', 'authType', 'logoUrl'],
+            },
+          ],
+        });
+      }
       throw new ConflictError('A connection for this software already exists for this tenant');
     }
 
     const connection = await PmsConnection.create({
       tenantId,
       softwareId: software.id,
-      status: status || 'draft',
+      status: targetStatus,
       credentials: credentials ?? null,
       capabilities: software.capabilities ?? null,
     });
@@ -102,6 +120,15 @@ export const propertyManagersService = {
     return connection.reload();
   },
 
+  /**
+   * Delete a PMS connection. Removes the record from the database.
+   */
+  delete: async (tenantId, connectionId) => {
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+    await connection.destroy();
+    return { deleted: true, connectionId };
+  },
+
   testConnection: async (tenantId, connectionId) => {
     const connection = await propertyManagersService.getById(tenantId, connectionId);
     const software = await Software.findByPk(connection.softwareId);
@@ -111,6 +138,25 @@ export const propertyManagersService = {
       throw new BadRequestError(`Connector not available for software: ${software.key}`);
     }
     const connector = getConnector(software.key, connection);
+    return await connector.testConnection();
+  },
+
+  /**
+   * Test credentials without persisting. Uses the connector to hit the PMS API
+   * (e.g. Rentvine /portfolios/search). Returns { ok, message }.
+   */
+  testCredentials: async (tenantId, body) => {
+    await ensureTenant(tenantId);
+    const { softwareKey, credentials = {} } = body;
+    if (!softwareKey) throw new BadRequestError('softwareKey is required');
+
+    const software = await getSoftwareByKey(softwareKey);
+    if (!hasConnector(software.key)) {
+      throw new BadRequestError(`Connector not available for software: ${software.key}`);
+    }
+
+    const fakeConnection = { credentials };
+    const connector = getConnector(software.key, fakeConnection);
     return await connector.testConnection();
   },
 

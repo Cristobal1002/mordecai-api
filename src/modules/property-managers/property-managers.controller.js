@@ -59,11 +59,31 @@ export const propertyManagersController = {
     }
   },
 
+  delete: async (req, res, next) => {
+    try {
+      const { tenantId, connectionId } = req.params;
+      const data = await propertyManagersService.delete(tenantId, connectionId);
+      res.ok(data, 'Connection deleted successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
   testConnection: async (req, res, next) => {
     try {
       const { tenantId, connectionId } = req.params;
       const data = await propertyManagersService.testConnection(tenantId, connectionId);
       res.ok(data, data.ok ? 'Connection successful' : 'Connection failed');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  testCredentials: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const data = await propertyManagersService.testCredentials(tenantId, req.body);
+      res.ok(data, data.ok ? 'Credentials are valid' : 'Credentials test failed');
     } catch (error) {
       next(error);
     }

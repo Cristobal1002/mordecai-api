@@ -40,4 +40,15 @@ export const updateStatusValidator = [
 
 export const testConnectionValidator = [tenantIdParam, connectionIdParam];
 
+export const testCredentialsValidator = [
+  tenantIdParam,
+  body('softwareKey')
+    .trim()
+    .notEmpty()
+    .withMessage('softwareKey is required')
+    .isLength({ max: 64 })
+    .withMessage('softwareKey must be up to 64 characters'),
+  body('credentials').isObject().withMessage('credentials must be an object'),
+];
+
 export const triggerSyncValidator = [tenantIdParam, connectionIdParam];

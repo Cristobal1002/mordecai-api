@@ -1,18 +1,47 @@
 /**
  * Rentvine API client — llamadas HTTP al PMS.
  * Auth: HTTP Basic con access key como username y secret como password.
- * Base URL: https://{account}.rentvine.com/api/manager
+ * Base URL: https://{subdomain}.rentvine.com/api/manager
+ * Account/subdomain is required; accepts "b4imanagement" or full URL "https://b4imanagement.rentvine.com".
  * @see https://docs.rentvine.com/
  */
 import axios from 'axios';
 import { logger } from '../../../../utils/logger.js';
 
+/**
+ * Normalize account to subdomain only. Accepts:
+ * - Full URL: https://b4imanagement.rentvine.com → b4imanagement
+ * - Host: b4imanagement.rentvine.com → b4imanagement
+ * - Subdomain: b4imanagement → b4imanagement
+ */
+function getSubdomain(account) {
+  if (!account || typeof account !== 'string') return '';
+  const raw = account.trim();
+  try {
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      const u = new URL(raw);
+      const host = u.hostname;
+      if (host.endsWith('.rentvine.com')) {
+        return host.slice(0, -'.rentvine.com'.length);
+      }
+      return host;
+    }
+    if (raw.includes('.rentvine.com')) {
+      return raw.split('.rentvine.com')[0].trim();
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
 export function createRentvineClient(credentials) {
   const accessKey = credentials?.accessKey ?? credentials?.access_key ?? '';
   const secret = credentials?.secret ?? '';
-  const account = credentials?.account ?? 'example';
+  const subdomain = getSubdomain(credentials?.account ?? '');
+  const host = subdomain ? `${subdomain}.rentvine.com` : 'example.rentvine.com';
   const baseURL =
-    process.env.RENTVINE_API_URL || `https://${account}.rentvine.com/api/manager`;
+    process.env.RENTVINE_API_URL || `https://${host}/api/manager`;
 
   const basicAuth =
     accessKey && secret

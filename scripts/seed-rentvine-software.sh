@@ -16,9 +16,9 @@ curl -s -X POST "${API}/catalog/softwares" \
   "category": "property_manager",
   "authType": "apiKey",
   "authConfig": {
-    "requiredFields": ["accessKey", "secret"],
-    "optionalFields": ["account"],
-    "description": "HTTP Basic Auth: access key = username, secret = password. Account = subdomain (e.g. mycompany → mycompany.rentvine.com).",
+    "requiredFields": ["accessKey", "secret", "account"],
+    "optionalFields": [],
+    "description": "HTTP Basic Auth: access key = username, secret = password. Account = subdomain (e.g. b4imanagement) or full URL (https://b4imanagement.rentvine.com).",
     "docsUrl": "https://docs.rentvine.com/"
   },
   "capabilities": {
