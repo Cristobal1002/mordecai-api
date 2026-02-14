@@ -12,6 +12,14 @@ import { errorHandlerMiddleware } from '../middlewares/index.js';
 import { swaggerOptions } from '../config/swagger.js';
 
 export const loadExpress = (app) => {
+  const corsOrigins =
+    config.cors.origin === '*'
+      ? true
+      : config.cors.origin
+          .split(',')
+          .map((origin) => origin.trim())
+          .filter(Boolean);
+
   // App Runner/ELB sits in front of the app, so trust proxy headers
   // for correct IP detection and to avoid express-rate-limit warnings.
   app.set('trust proxy', 1);
@@ -21,15 +29,17 @@ export const loadExpress = (app) => {
   // CORS
   app.use(
     cors({
-      origin: config.cors.origin === '*' ? true : config.cors.origin.split(','),
+      origin: corsOrigins,
       credentials: config.cors.credentials,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: [
         'Content-Type',
         'Authorization',
+        'x-demo-token',
         'x-app-token',
         'x-csrf-token',
         'x-xsrf-token',
+        'x-eleven-tool-secret',
       ],
     })
   );
