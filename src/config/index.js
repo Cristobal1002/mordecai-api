@@ -56,7 +56,12 @@ export const config = {
       // 'alter': modifica tablas existentes
       // 'force': elimina y recrea tablas (¡CUIDADO en producción!)
       // false: no sincroniza (usa migraciones)
-      mode: process.env.DB_SYNC_MODE || false,
+      // process.env.DB_SYNC_MODE es siempre string; 'false' y '' deben ser false
+      mode: (() => {
+        const v = process.env.DB_SYNC_MODE;
+        if (!v || v === 'false' || v === '0') return false;
+        return v;
+      })(),
     },
   },
   cors: {

@@ -25,27 +25,53 @@ export const loadDatabase = async () => {
     initModels(sequelize);
     logger.info('Models initialized');
 
+    logger.info({ enabled: config.db.enabled, mode: config.db.sync.mode }, 'DB config');
     // Sincronizar modelos con la base de datos
     if (config.db.sync.mode) {
-      logger.info('Synchronizing models...');
-      
-      const syncOptions = {};
-      
-      if (config.db.sync.mode === 'alter') {
+      const mode = config.db.sync.mode;
+      logger.info({ syncMode: mode }, 'Database sync: starting model synchronization');
+      if (mode !== 'alter' && mode !== 'force') {
+        logger.warn(
+          'Database sync: mode is not "alter". Existing tables will NOT be updated (new columns in models will not be applied). Use DB_SYNC_MODE=alter to apply schema changes.'
+        );
+      }
+
+      const syncOptions = {
+        logging: (sql) => {
+          const s = String(sql);
+          const createMatch = s.match(/CREATE TABLE (?:IF NOT EXISTS )?"?(\w+)"?/i);
+          const alterMatch = s.match(/ALTER TABLE "?(\w+)"?/i);
+          const selectTableMatch = s.match(/table_name = '(\w+)'/);
+          const relnameMatch = s.match(/t\.relname = '(\w+)'/);
+          if (createMatch) {
+            logger.info({ table: createMatch[1], sql: s }, 'Database sync: creating table');
+          } else if (alterMatch) {
+            logger.info({ table: alterMatch[1], sql: s }, 'Database sync: altering table');
+          } else if (selectTableMatch) {
+            logger.info({ table: selectTableMatch[1] }, 'Database sync: table exists (no change)');
+          } else if (relnameMatch) {
+            logger.info({ table: relnameMatch[1] }, 'Database sync: table indexes checked');
+          } else {
+            logger.info({ sql: s }, 'Database sync: executing SQL');
+          }
+        },
+      };
+
+      if (mode === 'alter') {
         syncOptions.alter = true;
-        logger.warn(' this option will modify existing tables');
-      } else if (config.db.sync.mode === 'force') {
+        logger.warn('Database sync: alter=true will modify existing tables');
+      } else if (mode === 'force') {
         syncOptions.force = true;
-        logger.error('Using sync with force=true (will delete all tables)');
+        logger.error('Database sync: force=true will drop and recreate all tables');
         if (config.app.nodeEnv === 'production') {
           throw new Error('Don\'t allow sync with force=true in production');
         }
       }
-      
+
       await sequelize.sync(syncOptions);
-      logger.info('Models synchronized with the database');
+      logger.info({ syncMode: mode }, 'Database sync: models synchronized successfully');
     } else {
-      logger.info('Sync disabled (use migrations for changes in the database)');
+      logger.info('Database sync disabled (use migrations for schema changes)');
     }
   } catch (error) {
     logger.error({ error }, 'Error loading the database');
