@@ -247,7 +247,10 @@ export const registerCallForInteraction = async ({
     direction: 'outbound',
     conversation_initiation_client_data: {
       user_id: twilioTo || debtor.phone || '',
-      source_info: { source: 'mordecai-api', version: 'v1' },
+      source_info: {
+        source: process.env.ELEVENLABS_SOURCE || 'twilio',
+        version: 'v1',
+      },
       dynamic_variables: dynamicVariables,
     },
   };
