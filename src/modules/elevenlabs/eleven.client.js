@@ -12,6 +12,54 @@ const getApiKey = () => {
   return apiKey;
 };
 
+const looksLikeTwiml = (value) =>
+  typeof value === 'string' && /<Response[\s>]/i.test(String(value).trim());
+
+const findTwimlInObject = (payload, depth = 0) => {
+  if (!payload || depth > 5) return null;
+
+  if (typeof payload === 'string') {
+    return extractTwiml(payload);
+  }
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = findTwimlInObject(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof payload !== 'object') return null;
+
+  const preferredKeys = [
+    'twiml',
+    'twiML',
+    'twilio_twiml',
+    'twiml_response',
+    'xml',
+    'response',
+    'body',
+    'data',
+  ];
+
+  for (const key of preferredKeys) {
+    if (!(key in payload)) continue;
+    const value = payload[key];
+    if (looksLikeTwiml(value)) return String(value).trim();
+    const nested = findTwimlInObject(value, depth + 1);
+    if (nested) return nested;
+  }
+
+  for (const value of Object.values(payload)) {
+    if (looksLikeTwiml(value)) return String(value).trim();
+    const nested = findTwimlInObject(value, depth + 1);
+    if (nested) return nested;
+  }
+
+  return null;
+};
+
 const extractTwiml = (payload) => {
   if (!payload) return null;
 
@@ -19,7 +67,9 @@ const extractTwiml = (payload) => {
     const trimmed = payload.trim();
     if (!trimmed) return null;
 
-    if (trimmed.startsWith('<Response')) return trimmed;
+    // ElevenLabs can return raw TwiML with optional XML declaration.
+    // Accept both `<Response...>` and `<?xml ...?><Response...>`.
+    if (looksLikeTwiml(trimmed)) return trimmed;
 
     try {
       const parsed = JSON.parse(trimmed);
@@ -30,14 +80,7 @@ const extractTwiml = (payload) => {
   }
 
   if (typeof payload === 'object') {
-    return (
-      payload.twiml ||
-      payload.twiML ||
-      payload.response ||
-      payload?.data?.twiml ||
-      payload?.data?.twiML ||
-      null
-    );
+    return findTwimlInObject(payload);
   }
 
   return null;
@@ -68,7 +111,15 @@ export const registerTwilioCallInElevenLabs = async (payload) => {
 
   const twiml = extractTwiml(response.data);
   if (!twiml) {
-    throw new Error('ElevenLabs register-call response did not include TwiML');
+    const contentType =
+      response?.headers?.['content-type'] || response?.headers?.['Content-Type'] || 'unknown';
+    const bodyPreview =
+      typeof response?.data === 'string'
+        ? response.data.slice(0, 1000)
+        : JSON.stringify(response?.data || {}).slice(0, 1000);
+    throw new Error(
+      `ElevenLabs register-call response did not include TwiML (status=${response?.status}, content-type=${contentType}). Body preview: ${bodyPreview}`
+    );
   }
 
   return twiml;
