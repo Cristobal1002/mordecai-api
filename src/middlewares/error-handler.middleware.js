@@ -26,6 +26,19 @@ export const errorHandler = (err, req, res, _next) => {
     return res.status(err.statusCode).json(serialized);
   }
 
+  // JSON malformado en el body (body-parser / express.json())
+  const status = err.status ?? err.statusCode;
+  const isJsonParseError =
+    err instanceof SyntaxError ||
+    (status === 400 && (err.type === 'entity.parse.failed' || /JSON/i.test(String(err.message))));
+  if (isJsonParseError) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid JSON in request body',
+      details: config.app.nodeEnv === 'development' ? { parseError: err.message } : undefined,
+    });
+  }
+
   // Error no manejado
   return res.status(500).json({
     type: 'about:blank',

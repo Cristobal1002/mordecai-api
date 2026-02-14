@@ -12,6 +12,9 @@ import { ImportBatch } from './import-batch.model.js';
 import { DebtCase } from './debt-case.model.js';
 import { PaymentAgreement } from './payment-agreement.model.js';
 import { InteractionLog } from './interaction-log.model.js';
+import { Software } from './software.model.js';
+import { SoftwareSetupStep } from './software-setup-step.model.js';
+import { PmsConnection } from './pms-connection.model.js';
 
 export const initModels = (sequelize) => {
   // Inicializar modelos
@@ -25,6 +28,9 @@ export const initModels = (sequelize) => {
   DebtCase.initModel(sequelize);
   PaymentAgreement.initModel(sequelize);
   InteractionLog.initModel(sequelize);
+  Software.initModel(sequelize);
+  SoftwareSetupStep.initModel(sequelize);
+  PmsConnection.initModel(sequelize);
 
   // Definir relaciones
 
@@ -37,6 +43,11 @@ export const initModels = (sequelize) => {
   Tenant.hasMany(InteractionLog, { foreignKey: 'tenant_id', as: 'interactionLogs' });
   Tenant.hasMany(TenantUser, { foreignKey: 'tenant_id', as: 'memberships' });
   Tenant.hasMany(TenantInvitation, { foreignKey: 'tenant_id', as: 'invitations' });
+  Tenant.hasMany(PmsConnection, { foreignKey: 'tenant_id', as: 'pmsConnections' });
+
+  // Software hasMany...
+  Software.hasMany(SoftwareSetupStep, { foreignKey: 'software_id', as: 'setupSteps' });
+  Software.hasMany(PmsConnection, { foreignKey: 'software_id', as: 'pmsConnections' });
 
   // User hasMany...
   User.hasMany(TenantUser, { foreignKey: 'user_id', as: 'memberships' });
@@ -74,6 +85,10 @@ export const initModels = (sequelize) => {
   TenantUser.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
   TenantInvitation.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   TenantInvitation.belongsTo(User, { foreignKey: 'created_by', as: 'createdByUser' });
+
+  SoftwareSetupStep.belongsTo(Software, { foreignKey: 'software_id', as: 'software' });
+  PmsConnection.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PmsConnection.belongsTo(Software, { foreignKey: 'software_id', as: 'software' });
 };
 
 export {
@@ -87,5 +102,8 @@ export {
   DebtCase,
   PaymentAgreement,
   InteractionLog,
+  Software,
+  SoftwareSetupStep,
+  PmsConnection,
 };
 
