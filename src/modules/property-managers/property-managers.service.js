@@ -1,12 +1,19 @@
 /**
  * Property-managers service — Capa 2: conexiones reales por tenant.
- * CRUD pms_connections, testConnection. triggerSync solo pone status syncing;
- * el worker en mordecai-workers (BullMQ/Upstash) consume y ejecuta el sync.
+ * CRUD pms_connections, testConnection. triggerSync encola job pms-sync;
+ * el worker en mordecai-workers procesa el job y ejecuta runSync (4 pasos).
+ * Credentials are encrypted at rest (AES-256-GCM) and never returned to the client.
  */
 import { PmsConnection, Software } from '../../models/index.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { getConnector, hasConnector } from './connectors/connector.factory.js';
+import { addPmsSyncJob } from '../../queues/pms-sync.queue.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../../errors/index.js';
+import {
+  encryptCredentials,
+  decryptCredentials,
+  isEncryptedPayload,
+} from '../../utils/credentials-crypto.js';
 
 const VALID_STATUSES = ['draft', 'connected', 'syncing', 'error', 'disabled'];
 
@@ -54,6 +61,31 @@ export const propertyManagersService = {
     return connection;
   },
 
+  /**
+   * Returns only the decrypted credentials for a connection. Used when the user
+   * opens the edit form (authenticated request).
+   */
+  getCredentials: async (tenantId, connectionId) => {
+    const withCreds = await propertyManagersService.getByIdWithDecryptedCredentials(
+      tenantId,
+      connectionId
+    );
+    return { credentials: withCreds.credentials ?? null };
+  },
+
+  /**
+   * Same as getById but with credentials decrypted for internal use (connector).
+   * Do not expose the returned object to the client.
+   */
+  getByIdWithDecryptedCredentials: async (tenantId, connectionId) => {
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+    const plain = connection.get({ plain: true });
+    const credentials = isEncryptedPayload(plain.credentials)
+      ? decryptCredentials(plain.credentials)
+      : plain.credentials;
+    return { ...plain, credentials };
+  },
+
   create: async (tenantId, body) => {
     await ensureTenant(tenantId);
     const { softwareKey, credentials = null, status = 'draft' } = body;
@@ -68,8 +100,12 @@ export const propertyManagersService = {
     if (existing) {
       const canReconnect = ['disabled', 'draft'].includes(existing.status);
       if (canReconnect) {
+        const toStore =
+          credentials != null
+            ? encryptCredentials(credentials)
+            : existing.credentials;
         await existing.update({
-          credentials: credentials ?? existing.credentials,
+          credentials: toStore,
           status: targetStatus,
           lastError: null,
         });
@@ -89,7 +125,8 @@ export const propertyManagersService = {
       tenantId,
       softwareId: software.id,
       status: targetStatus,
-      credentials: credentials ?? null,
+      credentials:
+        credentials != null ? encryptCredentials(credentials) : null,
       capabilities: software.capabilities ?? null,
     });
     return await PmsConnection.findByPk(connection.id, {
@@ -104,8 +141,12 @@ export const propertyManagersService = {
 
   updateCredentials: async (tenantId, connectionId, credentials) => {
     const connection = await propertyManagersService.getById(tenantId, connectionId);
+    const toStore =
+      credentials != null
+        ? encryptCredentials(credentials)
+        : connection.credentials;
     await connection.update({
-      credentials: credentials ?? connection.credentials,
+      credentials: toStore,
       lastError: null,
     });
     return connection.reload();
@@ -130,14 +171,17 @@ export const propertyManagersService = {
   },
 
   testConnection: async (tenantId, connectionId) => {
-    const connection = await propertyManagersService.getById(tenantId, connectionId);
-    const software = await Software.findByPk(connection.softwareId);
+    const connectionWithCreds = await propertyManagersService.getByIdWithDecryptedCredentials(
+      tenantId,
+      connectionId
+    );
+    const software = await Software.findByPk(connectionWithCreds.softwareId);
     if (!software) throw new NotFoundError('Software');
 
     if (!hasConnector(software.key)) {
       throw new BadRequestError(`Connector not available for software: ${software.key}`);
     }
-    const connector = getConnector(software.key, connection);
+    const connector = getConnector(software.key, connectionWithCreds);
     return await connector.testConnection();
   },
 
@@ -161,9 +205,7 @@ export const propertyManagersService = {
   },
 
   /**
-   * Marca la conexión como syncing. El worker en mordecai-workers (BullMQ/Upstash)
-   * es el que encola y procesa el job; puede usar status=syncing para detectar pendientes
-   * o encolar por otro mecanismo.
+   * Enqueue a sync job and set connection to syncing. Worker (mordecai-workers) processes the job.
    */
   triggerSync: async (tenantId, connectionId) => {
     const connection = await propertyManagersService.getById(tenantId, connectionId);
@@ -180,13 +222,20 @@ export const propertyManagersService = {
       throw new BadRequestError(`Connector not available for software: ${software.key}`);
     }
 
+    const jobId = await addPmsSyncJob(connectionId, tenantId);
+    if (jobId == null) {
+      throw new BadRequestError(
+        'Sync queue is not available. Set REDIS_URL to enable on-demand sync (worker must be running).'
+      );
+    }
+
     await connection.update({ status: 'syncing', lastError: null });
     return {
       enqueued: true,
+      jobId,
       connectionId: connection.id,
       status: 'syncing',
-      message:
-        'Sync requested. The worker (mordecai-workers) will process the job via BullMQ/Upstash.',
+      message: 'Sync requested. The worker will process the job.',
     };
   },
 };

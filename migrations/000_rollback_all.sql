@@ -2,6 +2,18 @@
 -- WARNING: This will delete all data!
 
 -- Drop tables (reverse order of creation)
+DROP TABLE IF EXISTS sync_runs CASCADE;
+DROP TABLE IF EXISTS ar_aging_snapshots CASCADE;
+DROP TABLE IF EXISTS ar_balances CASCADE;
+DROP TABLE IF EXISTS ar_adjustments CASCADE;
+DROP TABLE IF EXISTS ar_payments CASCADE;
+DROP TABLE IF EXISTS ar_charges CASCADE;
+DROP TABLE IF EXISTS pms_leases CASCADE;
+DROP TABLE IF EXISTS pms_units CASCADE;
+DROP TABLE IF EXISTS pms_debtor_contacts CASCADE;
+DROP TABLE IF EXISTS pms_debtors CASCADE;
+DROP TABLE IF EXISTS pms_properties CASCADE;
+DROP TABLE IF EXISTS external_mappings CASCADE;
 DROP TABLE IF EXISTS interaction_logs CASCADE;
 DROP TABLE IF EXISTS payment_agreements CASCADE;
 DROP TABLE IF EXISTS debt_cases CASCADE;

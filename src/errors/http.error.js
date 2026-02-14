@@ -36,6 +36,12 @@ export class BadRequestError extends CustomError {
     }
 }
 
+export class ServiceUnavailableError extends CustomError {
+  constructor(message = 'Service temporarily unavailable.') {
+    super(message, 503, null, 'https://mordcai.com/errors/service-unavailable');
+  }
+}
+
 /** Thrown when user tried password login but is registered with social (Google/Microsoft). */
 export class UseSocialLoginError extends CustomError {
     constructor(provider = 'Google') {

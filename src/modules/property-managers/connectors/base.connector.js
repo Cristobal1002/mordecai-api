@@ -14,6 +14,10 @@ export class BaseConnector {
     throw new Error('testConnection() must be implemented');
   }
 
+  /**
+   * Full sync: fetch from PMS and return normalized arrays for upsert.
+   * @returns {{ debtors: Array, leases: Array, charges: Array, payments: Array, stats?: object }}
+   */
   async syncFull() {
     throw new Error('syncFull() must be implemented');
   }

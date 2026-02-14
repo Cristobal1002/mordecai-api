@@ -39,7 +39,7 @@ export const errorHandler = (err, req, res, _next) => {
     });
   }
 
-  // Error no manejado
+  // Error no manejado: mensaje genérico al cliente; en desarrollo se incluye el mensaje real (nunca el stack)
   return res.status(500).json({
     type: 'about:blank',
     title: 'Internal server error',
@@ -49,7 +49,6 @@ export const errorHandler = (err, req, res, _next) => {
         config.app.nodeEnv === 'development'
           ? err.message
           : 'An internal server error occurred',
-      ...(config.app.nodeEnv === 'development' && { stack: err.stack }),
     },
   });
 };
