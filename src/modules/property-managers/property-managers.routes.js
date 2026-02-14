@@ -7,6 +7,7 @@ import {
   updateCredentialsValidator,
   updateStatusValidator,
   testConnectionValidator,
+  testCredentialsValidator,
   triggerSyncValidator,
 } from './property-managers.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
@@ -59,6 +60,15 @@ router.patch(
   propertyManagersController.updateStatus
 );
 
+// DELETE /api/v1/tenants/:tenantId/pms-connections/:connectionId
+router.delete(
+  '/:tenantId/pms-connections/:connectionId',
+  requireAuth(),
+  getPropertyManagerValidator,
+  validateRequest,
+  propertyManagersController.delete
+);
+
 // POST /api/v1/tenants/:tenantId/pms-connections/:connectionId/test
 router.post(
   '/:tenantId/pms-connections/:connectionId/test',
@@ -66,6 +76,15 @@ router.post(
   testConnectionValidator,
   validateRequest,
   propertyManagersController.testConnection
+);
+
+// POST /api/v1/tenants/:tenantId/pms-connections/test-credentials
+router.post(
+  '/:tenantId/pms-connections/test-credentials',
+  requireAuth(),
+  testCredentialsValidator,
+  validateRequest,
+  propertyManagersController.testCredentials
 );
 
 // POST /api/v1/tenants/:tenantId/pms-connections/:connectionId/sync

@@ -84,7 +84,8 @@
  * @swagger
  * /tenants/{tenantId}/pms-connections/{connectionId}/credentials:
  *   patch:
- *     summary: Actualizar credenciales de la conexión
+ *     summary: Edit connection (update credentials)
+ *     description: Updates the stored credentials for an existing PMS connection. Use this to change API keys, secrets, or account/subdomain. Clears lastError on success.
  *     tags: [PropertyManagers]
  *     security: [{ bearerAuth: [] }]
  *     parameters:
@@ -114,7 +115,8 @@
  * @swagger
  * /tenants/{tenantId}/pms-connections/{connectionId}/status:
  *   patch:
- *     summary: Actualizar estado de la conexión
+ *     summary: Update connection status
+ *     description: Change the connection status (draft, connected, syncing, error, disabled). Use status `disabled` to deactivate a connection without deleting it; it will no longer appear as connected in the UI.
  *     tags: [PropertyManagers]
  *     security: [{ bearerAuth: [] }]
  *     parameters:
@@ -144,6 +146,42 @@
 
 /**
  * @swagger
+ * /tenants/{tenantId}/pms-connections/{connectionId}:
+ *   delete:
+ *     summary: Delete connection (remove connection)
+ *     description: Permanently deletes the PMS connection. Credentials and connection metadata are removed. The tenant can create a new connection to the same software later.
+ *     tags: [PropertyManagers]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: tenantId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: connectionId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Connection deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Connection deleted successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     deleted: { type: boolean, example: true }
+ *                     connectionId: { type: string, format: uuid }
+ *       401: { description: 'No autorizado', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorUnauthorizedResponse' } } } }
+ *       404: { description: 'Conexión no encontrada', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorNotFoundResponse' } } } }
+ */
+
+/**
+ * @swagger
  * /tenants/{tenantId}/pms-connections/{connectionId}/test:
  *   post:
  *     summary: Probar conexión (testConnection del connector)
@@ -167,6 +205,40 @@
  *       400: { description: 'Connector no disponible', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
  *       401: { description: 'No autorizado', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorUnauthorizedResponse' } } } }
  *       404: { description: 'Conexión no encontrada', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorNotFoundResponse' } } } }
+ */
+
+/**
+ * @swagger
+ * /tenants/{tenantId}/pms-connections/test-credentials:
+ *   post:
+ *     summary: Test credentials without creating a connection
+ *     description: Calls the connector's test (e.g. Rentvine GET /portfolios/search). Returns ok + message. Use before creating a connection to validate credentials.
+ *     tags: [PropertyManagers]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: tenantId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [softwareKey, credentials]
+ *             properties:
+ *               softwareKey: { type: string, example: "rentvine" }
+ *               credentials: { type: object, description: "Keys depend on software (e.g. accessKey, secret, account for Rentvine)" }
+ *     responses:
+ *       200:
+ *         description: Test result (ok true/false, message if failed)
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/TestConnectionResponse' }
+ *       400: { description: 'softwareKey required, credentials required, or connector not available', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+ *       401: { description: 'No autorizado', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorUnauthorizedResponse' } } } }
+ *       404: { description: 'Tenant or software not found', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorNotFoundResponse' } } } }
  */
 
 /**
