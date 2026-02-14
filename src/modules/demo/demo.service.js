@@ -288,6 +288,9 @@ export const startDemoCall = async (payload) => {
   });
 
   try {
+    // TODO(mordecai): revisar arquitectura de disparo de llamadas.
+    // Hoy el demo llama Twilio directamente desde API para respuesta inmediata.
+    // En una fase futura decidir si unificamos este flujo en workers (cola) o lo mantenemos en backend.
     const callSid = await createTwilioCall({
       to: input.phone,
       from: twilioConfig.fromNumber,

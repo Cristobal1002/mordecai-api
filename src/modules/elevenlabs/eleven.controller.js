@@ -65,6 +65,15 @@ export const elevenController = {
     }
 
     const normalizedPayload = normalizeElevenPostCallPayload(req.body);
+    logger.info(
+      {
+        event: normalizedPayload.event,
+        conversationId: normalizedPayload.conversationId,
+        callSid: normalizedPayload.callSid,
+        interactionId: normalizedPayload.interactionId,
+      },
+      'Accepted ElevenLabs post-call webhook'
+    );
 
     let s3Key = null;
     try {
