@@ -12,12 +12,13 @@ import { errorHandlerMiddleware } from '../middlewares/index.js';
 import { swaggerOptions } from '../config/swagger.js';
 
 export const loadExpress = (app) => {
+  const normalizeOrigin = (origin) => origin.trim().replace(/\/+$/, '');
   const corsOrigins =
     config.cors.origin === '*'
       ? true
       : config.cors.origin
           .split(',')
-          .map((origin) => origin.trim())
+          .map(normalizeOrigin)
           .filter(Boolean);
 
   // App Runner/ELB sits in front of the app, so trust proxy headers
