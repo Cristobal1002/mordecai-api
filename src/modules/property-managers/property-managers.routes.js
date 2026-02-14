@@ -24,6 +24,15 @@ router.get(
   propertyManagersController.listByTenant
 );
 
+// GET /api/v1/tenants/:tenantId/pms-connections/:connectionId/credentials (must be before :connectionId)
+router.get(
+  '/:tenantId/pms-connections/:connectionId/credentials',
+  requireAuth(),
+  getPropertyManagerValidator,
+  validateRequest,
+  propertyManagersController.getCredentials
+);
+
 // GET /api/v1/tenants/:tenantId/pms-connections/:connectionId
 router.get(
   '/:tenantId/pms-connections/:connectionId',

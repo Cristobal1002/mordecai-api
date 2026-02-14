@@ -1,4 +1,5 @@
 import { BaseConnector } from '../base.connector.js';
+import { getConnectionTestErrorMessage } from '../connection-test-error.js';
 import { createRentvineClient } from './rentvine.client.js';
 
 export function getRentvineConnector(connection) {
@@ -12,13 +13,20 @@ class RentvineConnector extends BaseConnector {
       await client.testAuth();
       return { ok: true };
     } catch (err) {
-      const message = err.response?.data?.message ?? err.message ?? 'Connection failed';
+      const message = getConnectionTestErrorMessage(err);
       return { ok: false, message };
     }
   }
 
   async syncFull() {
-    return { synced: 0, errors: [] };
+    // TODO: fetch portfolios, residents, leases, charges, payments from Rentvine API and map to canonical shape
+    return {
+      debtors: [],
+      leases: [],
+      charges: [],
+      payments: [],
+      stats: {},
+    };
   }
 
   async syncIncremental(since) {

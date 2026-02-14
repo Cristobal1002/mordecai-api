@@ -15,6 +15,18 @@ import { InteractionLog } from './interaction-log.model.js';
 import { Software } from './software.model.js';
 import { SoftwareSetupStep } from './software-setup-step.model.js';
 import { PmsConnection } from './pms-connection.model.js';
+import { ExternalMapping } from './external-mapping.model.js';
+import { PmsProperty } from './pms-property.model.js';
+import { PmsDebtor } from './pms-debtor.model.js';
+import { PmsDebtorContact } from './pms-debtor-contact.model.js';
+import { PmsUnit } from './pms-unit.model.js';
+import { PmsLease } from './pms-lease.model.js';
+import { ArCharge } from './ar-charge.model.js';
+import { ArPayment } from './ar-payment.model.js';
+import { ArAdjustment } from './ar-adjustment.model.js';
+import { ArBalance } from './ar-balance.model.js';
+import { ArAgingSnapshot } from './ar-aging-snapshot.model.js';
+import { SyncRun } from './sync-run.model.js';
 
 export const initModels = (sequelize) => {
   // Inicializar modelos
@@ -31,6 +43,18 @@ export const initModels = (sequelize) => {
   Software.initModel(sequelize);
   SoftwareSetupStep.initModel(sequelize);
   PmsConnection.initModel(sequelize);
+  ExternalMapping.initModel(sequelize);
+  PmsProperty.initModel(sequelize);
+  PmsDebtor.initModel(sequelize);
+  PmsDebtorContact.initModel(sequelize);
+  PmsUnit.initModel(sequelize);
+  PmsLease.initModel(sequelize);
+  ArCharge.initModel(sequelize);
+  ArPayment.initModel(sequelize);
+  ArAdjustment.initModel(sequelize);
+  ArBalance.initModel(sequelize);
+  ArAgingSnapshot.initModel(sequelize);
+  SyncRun.initModel(sequelize);
 
   // Definir relaciones
 
@@ -44,6 +68,15 @@ export const initModels = (sequelize) => {
   Tenant.hasMany(TenantUser, { foreignKey: 'tenant_id', as: 'memberships' });
   Tenant.hasMany(TenantInvitation, { foreignKey: 'tenant_id', as: 'invitations' });
   Tenant.hasMany(PmsConnection, { foreignKey: 'tenant_id', as: 'pmsConnections' });
+  Tenant.hasMany(PmsProperty, { foreignKey: 'tenant_id', as: 'pmsProperties' });
+  Tenant.hasMany(PmsDebtor, { foreignKey: 'tenant_id', as: 'pmsDebtors' });
+  Tenant.hasMany(PmsUnit, { foreignKey: 'tenant_id', as: 'pmsUnits' });
+  Tenant.hasMany(PmsLease, { foreignKey: 'tenant_id', as: 'pmsLeases' });
+  Tenant.hasMany(ArCharge, { foreignKey: 'tenant_id', as: 'arCharges' });
+  Tenant.hasMany(ArPayment, { foreignKey: 'tenant_id', as: 'arPayments' });
+  Tenant.hasMany(ArAdjustment, { foreignKey: 'tenant_id', as: 'arAdjustments' });
+  Tenant.hasMany(ArBalance, { foreignKey: 'tenant_id', as: 'arBalances' });
+  Tenant.hasMany(ArAgingSnapshot, { foreignKey: 'tenant_id', as: 'arAgingSnapshots' });
 
   // Software hasMany...
   Software.hasMany(SoftwareSetupStep, { foreignKey: 'software_id', as: 'setupSteps' });
@@ -89,6 +122,59 @@ export const initModels = (sequelize) => {
   SoftwareSetupStep.belongsTo(Software, { foreignKey: 'software_id', as: 'software' });
   PmsConnection.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   PmsConnection.belongsTo(Software, { foreignKey: 'software_id', as: 'software' });
+
+  // PMS sync: PmsConnection hasMany...
+  PmsConnection.hasMany(ExternalMapping, { foreignKey: 'pms_connection_id', as: 'externalMappings' });
+  PmsConnection.hasMany(PmsProperty, { foreignKey: 'pms_connection_id', as: 'pmsProperties' });
+  PmsConnection.hasMany(PmsDebtor, { foreignKey: 'pms_connection_id', as: 'pmsDebtors' });
+  PmsConnection.hasMany(PmsUnit, { foreignKey: 'pms_connection_id', as: 'pmsUnits' });
+  PmsConnection.hasMany(PmsLease, { foreignKey: 'pms_connection_id', as: 'pmsLeases' });
+  PmsConnection.hasMany(ArCharge, { foreignKey: 'pms_connection_id', as: 'arCharges' });
+  PmsConnection.hasMany(ArPayment, { foreignKey: 'pms_connection_id', as: 'arPayments' });
+  PmsConnection.hasMany(ArAdjustment, { foreignKey: 'pms_connection_id', as: 'arAdjustments' });
+  PmsConnection.hasMany(ArBalance, { foreignKey: 'pms_connection_id', as: 'arBalances' });
+  PmsConnection.hasMany(ArAgingSnapshot, { foreignKey: 'pms_connection_id', as: 'arAgingSnapshots' });
+  PmsConnection.hasMany(SyncRun, { foreignKey: 'pms_connection_id', as: 'syncRuns' });
+
+  PmsProperty.hasMany(PmsUnit, { foreignKey: 'pms_property_id', as: 'pmsUnits' });
+  PmsProperty.hasMany(PmsLease, { foreignKey: 'pms_property_id', as: 'pmsLeases' });
+  PmsDebtor.hasMany(PmsDebtorContact, { foreignKey: 'pms_debtor_id', as: 'contacts' });
+  PmsDebtor.hasMany(PmsLease, { foreignKey: 'pms_debtor_id', as: 'pmsLeases' });
+  PmsUnit.hasMany(PmsLease, { foreignKey: 'pms_unit_id', as: 'pmsLeases' });
+  PmsLease.hasMany(ArCharge, { foreignKey: 'pms_lease_id', as: 'arCharges' });
+  PmsLease.hasMany(ArPayment, { foreignKey: 'pms_lease_id', as: 'arPayments' });
+  PmsLease.hasMany(ArAdjustment, { foreignKey: 'pms_lease_id', as: 'arAdjustments' });
+  PmsLease.hasMany(ArBalance, { foreignKey: 'pms_lease_id', as: 'arBalances' });
+
+  ExternalMapping.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  PmsProperty.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PmsProperty.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  PmsDebtor.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PmsDebtor.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  PmsDebtorContact.belongsTo(PmsDebtor, { foreignKey: 'pms_debtor_id', as: 'pmsDebtor' });
+  PmsUnit.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PmsUnit.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  PmsUnit.belongsTo(PmsProperty, { foreignKey: 'pms_property_id', as: 'pmsProperty' });
+  PmsLease.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PmsLease.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  PmsLease.belongsTo(PmsDebtor, { foreignKey: 'pms_debtor_id', as: 'pmsDebtor' });
+  PmsLease.belongsTo(PmsProperty, { foreignKey: 'pms_property_id', as: 'pmsProperty' });
+  PmsLease.belongsTo(PmsUnit, { foreignKey: 'pms_unit_id', as: 'pmsUnit' });
+  ArCharge.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  ArCharge.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  ArCharge.belongsTo(PmsLease, { foreignKey: 'pms_lease_id', as: 'pmsLease' });
+  ArPayment.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  ArPayment.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  ArPayment.belongsTo(PmsLease, { foreignKey: 'pms_lease_id', as: 'pmsLease' });
+  ArAdjustment.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  ArAdjustment.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  ArAdjustment.belongsTo(PmsLease, { foreignKey: 'pms_lease_id', as: 'pmsLease' });
+  ArBalance.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  ArBalance.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  ArBalance.belongsTo(PmsLease, { foreignKey: 'pms_lease_id', as: 'pmsLease' });
+  ArAgingSnapshot.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  ArAgingSnapshot.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  SyncRun.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
 };
 
 export {
@@ -105,5 +191,17 @@ export {
   Software,
   SoftwareSetupStep,
   PmsConnection,
+  ExternalMapping,
+  PmsProperty,
+  PmsDebtor,
+  PmsDebtorContact,
+  PmsUnit,
+  PmsLease,
+  ArCharge,
+  ArPayment,
+  ArAdjustment,
+  ArBalance,
+  ArAgingSnapshot,
+  SyncRun,
 };
 

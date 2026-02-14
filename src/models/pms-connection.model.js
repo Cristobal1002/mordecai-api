@@ -59,6 +59,12 @@ export class PmsConnection extends Model {
           allowNull: true,
           field: 'last_error',
         },
+        syncState: {
+          type: DataTypes.JSONB,
+          allowNull: true,
+          defaultValue: {},
+          field: 'sync_state',
+        },
         createdAt: {
           type: DataTypes.DATE,
           field: 'created_at',

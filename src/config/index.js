@@ -71,5 +71,7 @@ export const config = {
     windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000, // 1 minuto
     max: Number(process.env.RATE_LIMIT_MAX) || 100, // 100 requests por minuto
   },
+  // PMS credentials at rest: base64-encoded 32-byte key. Generate: openssl rand -base64 32
+  credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY || null,
 };
 

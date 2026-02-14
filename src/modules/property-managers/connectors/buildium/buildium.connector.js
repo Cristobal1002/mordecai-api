@@ -1,4 +1,5 @@
 import { BaseConnector } from '../base.connector.js';
+import { getConnectionTestErrorMessage } from '../connection-test-error.js';
 import { createBuildiumClient } from './buildium.client.js';
 
 export function getBuildiumConnector(connection) {
@@ -12,13 +13,20 @@ class BuildiumConnector extends BaseConnector {
       await client.testAuth();
       return { ok: true };
     } catch (err) {
-      const message = err.response?.data?.message ?? err.message ?? 'Connection failed';
+      const message = getConnectionTestErrorMessage(err);
       return { ok: false, message };
     }
   }
 
   async syncFull() {
-    return { synced: 0, errors: [] };
+    // TODO: fetch from Buildium API and map to canonical shape
+    return {
+      debtors: [],
+      leases: [],
+      charges: [],
+      payments: [],
+      stats: {},
+    };
   }
 
   async syncIncremental(since) {
