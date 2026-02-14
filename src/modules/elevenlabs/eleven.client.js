@@ -44,14 +44,27 @@ const extractTwiml = (payload) => {
 };
 
 export const registerTwilioCallInElevenLabs = async (payload) => {
-  const response = await axios.post(`${ELEVEN_BASE_URL}${REGISTER_CALL_PATH}`, payload, {
-    headers: {
-      'xi-api-key': getApiKey(),
-      'Content-Type': 'application/json',
-    },
-    timeout: Number(process.env.ELEVENLABS_HTTP_TIMEOUT_MS) || 15000,
-    responseType: 'text',
-  });
+  let response;
+  try {
+    response = await axios.post(`${ELEVEN_BASE_URL}${REGISTER_CALL_PATH}`, payload, {
+      headers: {
+        'xi-api-key': getApiKey(),
+        'Content-Type': 'application/json',
+      },
+      timeout: Number(process.env.ELEVENLABS_HTTP_TIMEOUT_MS) || 15000,
+      responseType: 'text',
+    });
+  } catch (error) {
+    const status = error?.response?.status;
+    const body = error?.response?.data;
+    const details =
+      typeof body === 'string'
+        ? body.slice(0, 1000)
+        : JSON.stringify(body || {}).slice(0, 1000);
+    throw new Error(
+      `ElevenLabs register-call failed${status ? ` (${status})` : ''}: ${details}`
+    );
+  }
 
   const twiml = extractTwiml(response.data);
   if (!twiml) {

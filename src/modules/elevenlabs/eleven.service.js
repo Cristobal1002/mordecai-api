@@ -242,12 +242,19 @@ export const registerCallForInteraction = async ({
 
   const payload = {
     agent_id: agentId,
+    from_number: twilioFrom || process.env.TWILIO_FROM_NUMBER || '',
+    to_number: twilioTo || debtor.phone || '',
+    direction: 'outbound',
     conversation_initiation_client_data: {
       user_id: twilioTo || debtor.phone || '',
       source_info: { source: 'mordecai-api', version: 'v1' },
       dynamic_variables: dynamicVariables,
     },
   };
+
+  if (!payload.from_number || !payload.to_number) {
+    throw new Error('Missing from_number/to_number required by ElevenLabs register-call');
+  }
 
   const twiml = await registerTwilioCallInElevenLabs(payload);
 
