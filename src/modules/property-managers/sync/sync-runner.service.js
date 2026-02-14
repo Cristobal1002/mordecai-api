@@ -99,7 +99,7 @@ async function resolveInternalId(connectionId, entityType, externalId, transacti
  * Step 1: Sync debtors and leases from connector result; upsert and write external_mappings.
  */
 async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, transaction) {
-  const stats = { debtorsCreated: 0, debtorsUpdated: 0, leasesCreated: 0, leasesUpdated: 0 };
+  const stats = { debtorsCreated: 0, debtorsUpdated: 0, leasesCreated: 0, leasesUpdated: 0, leasesSkipped: 0 };
   const debtors = data.debtors || [];
   const leases = data.leases || [];
 
@@ -133,7 +133,14 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
 
   for (const l of leases) {
     const pmsDebtorId = await resolveInternalId(connectionId, 'debtor', l.debtorExternalId, transaction);
-    if (!pmsDebtorId) continue;
+    if (!pmsDebtorId) {
+      stats.leasesSkipped++;
+      logger.debug(
+        { connectionId, leaseExternalId: l.externalId, debtorExternalId: l.debtorExternalId },
+        'PMS sync: lease skipped (debtor not found)'
+      );
+      continue;
+    }
     const pmsPropertyId = l.propertyExternalId
       ? await resolveInternalId(connectionId, 'property', l.propertyExternalId, transaction)
       : null;
@@ -168,6 +175,12 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
     }
   }
 
+  if (stats.leasesSkipped > 0) {
+    logger.warn(
+      { connectionId, syncRunId, leasesSkipped: stats.leasesSkipped },
+      'PMS sync: some leases skipped (debtor not found)'
+    );
+  }
   await SyncRun.update(
     { step: 'debtors_leases', stats: { ...(data.stats || {}), ...stats } },
     { where: { id: syncRunId }, transaction }
@@ -180,10 +193,17 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
  */
 async function syncCharges(connectionId, tenantId, data, syncRunId, transaction) {
   const charges = data.charges || [];
-  let created = 0, updated = 0;
+  let created = 0, updated = 0, skipped = 0;
   for (const c of charges) {
     const pmsLeaseId = await resolveInternalId(connectionId, 'lease', c.leaseExternalId, transaction);
-    if (!pmsLeaseId) continue;
+    if (!pmsLeaseId) {
+      skipped++;
+      logger.debug(
+        { connectionId, chargeExternalId: c.externalId, leaseExternalId: c.leaseExternalId },
+        'PMS sync: charge skipped (lease not found)'
+      );
+      continue;
+    }
     const [, wasCreated] = await ArCharge.upsert(
       {
         tenantId,
@@ -204,11 +224,20 @@ async function syncCharges(connectionId, tenantId, data, syncRunId, transaction)
     if (wasCreated) created++;
     else updated++;
   }
+  if (skipped > 0) {
+    logger.warn(
+      { connectionId, syncRunId, chargesSkipped: skipped },
+      'PMS sync: some charges skipped (lease not found)'
+    );
+  }
   await SyncRun.update(
-    { step: 'charges', stats: { ...(data.stats || {}), chargesCreated: created, chargesUpdated: updated } },
+    {
+      step: 'charges',
+      stats: { ...(data.stats || {}), chargesCreated: created, chargesUpdated: updated, chargesSkipped: skipped },
+    },
     { where: { id: syncRunId }, transaction }
   );
-  return { chargesCreated: created, chargesUpdated: updated };
+  return { chargesCreated: created, chargesUpdated: updated, chargesSkipped: skipped };
 }
 
 /**
@@ -338,11 +367,17 @@ export async function runSync(connectionId, options = {}) {
     attributes: ['id'],
   });
   if (active) {
+    logger.warn({ connectionId, activeRunId: active.id }, 'PMS sync rejected: already in progress');
     throw new Error(`PMS sync already in progress for connection ${connectionId} (run ${active.id})`);
   }
 
   const trigger = options.trigger ?? 'manual';
   const idempotencyKey = options.idempotencyKey ?? `${connectionId}-${trigger}-${Date.now()}`;
+
+  logger.info(
+    { connectionId, tenantId, trigger, softwareKey: software?.key },
+    'PMS sync started'
+  );
 
   let syncRun;
   const transaction = await sequelize.transaction();
@@ -363,11 +398,15 @@ export async function runSync(connectionId, options = {}) {
     await transaction.commit();
   } catch (err) {
     await transaction.rollback();
+    logger.error({ err, connectionId }, 'PMS sync: failed to create SyncRun');
     throw err;
   }
 
+  logger.info({ connectionId, syncRunId: syncRun.id }, 'PMS sync: SyncRun created');
+
   let finalStats = {};
   try {
+    logger.info({ connectionId, syncRunId: syncRun.id }, 'PMS sync: fetching data from connector...');
     const data = await connector.syncFull();
     const dataNorm = {
       debtors: data?.debtors ?? [],
@@ -377,15 +416,56 @@ export async function runSync(connectionId, options = {}) {
       stats: data?.stats ?? {},
     };
 
+    logger.info(
+      {
+        connectionId,
+        syncRunId: syncRun.id,
+        debtorsCount: dataNorm.debtors.length,
+        leasesCount: dataNorm.leases.length,
+        chargesCount: dataNorm.charges.length,
+        paymentsCount: dataNorm.payments.length,
+      },
+      'PMS sync: data received from connector'
+    );
+
     const t2 = await sequelize.transaction();
     try {
-      await syncDebtorsAndLeases(connectionId, tenantId, dataNorm, syncRun.id, t2);
-      await syncCharges(connectionId, tenantId, dataNorm, syncRun.id, t2);
-      await syncPayments(connectionId, tenantId, dataNorm, syncRun.id, t2);
-      await computeBalancesAndAging(connectionId, tenantId, syncRun.id, t2);
+      logger.info({ connectionId, syncRunId: syncRun.id, step: '1/4' }, 'PMS sync: step debtors_leases');
+      const step1Stats = await syncDebtorsAndLeases(connectionId, tenantId, dataNorm, syncRun.id, t2);
+      logger.info(
+        { connectionId, syncRunId: syncRun.id, step: 'debtors_leases', ...step1Stats },
+        'PMS sync: step debtors_leases done'
+      );
+
+      logger.info({ connectionId, syncRunId: syncRun.id, step: '2/4' }, 'PMS sync: step charges');
+      const step2Stats = await syncCharges(connectionId, tenantId, dataNorm, syncRun.id, t2);
+      logger.info(
+        { connectionId, syncRunId: syncRun.id, step: 'charges', ...step2Stats },
+        'PMS sync: step charges done'
+      );
+
+      logger.info({ connectionId, syncRunId: syncRun.id, step: '3/4' }, 'PMS sync: step payments');
+      const step3Stats = await syncPayments(connectionId, tenantId, dataNorm, syncRun.id, t2);
+      logger.info(
+        { connectionId, syncRunId: syncRun.id, step: 'payments', ...step3Stats },
+        'PMS sync: step payments done'
+      );
+
+      logger.info({ connectionId, syncRunId: syncRun.id, step: '4/4' }, 'PMS sync: step balances_aging');
+      const step4Stats = await computeBalancesAndAging(connectionId, tenantId, syncRun.id, t2);
+      logger.info(
+        { connectionId, syncRunId: syncRun.id, step: 'balances_aging', ...step4Stats },
+        'PMS sync: step balances_aging done'
+      );
+
       await t2.commit();
+      logger.info({ connectionId, syncRunId: syncRun.id }, 'PMS sync: all steps committed');
     } catch (err) {
       await t2.rollback();
+      logger.error(
+        { err, connectionId, syncRunId: syncRun.id, step: 'sync_steps' },
+        'PMS sync: step failed, transaction rolled back'
+      );
       throw err;
     }
 
@@ -411,10 +491,16 @@ export async function runSync(connectionId, options = {}) {
       { status: 'completed', finishedAt: now },
       { where: { id: syncRun.id } }
     );
-    logger.info({ connectionId, syncRunId: syncRun.id }, 'PMS sync completed');
+    logger.info(
+      { connectionId, syncRunId: syncRun.id, lastSyncedAt: now },
+      'PMS sync completed successfully'
+    );
     return { ok: true, syncRunId: syncRun.id };
   } catch (err) {
-    logger.error({ err, connectionId, syncRunId: syncRun?.id }, 'PMS sync failed');
+    logger.error(
+      { err, connectionId, syncRunId: syncRun?.id, step: syncRun?.step, message: err?.message },
+      'PMS sync failed'
+    );
     const now = new Date();
     const prevState = connection.syncState ?? {};
     const syncState = { ...prevState, lastAttemptAt: now };
