@@ -83,6 +83,10 @@ export const normalizeElevenPostCallPayload = (rawEvent) => {
             new Date(startedAt).getTime() + Number(metadata.call_duration_secs) * 1000
           ).toISOString()
         : null,
+    callDurationSecs: Number.isFinite(Number(metadata?.call_duration_secs))
+      ? Number(metadata.call_duration_secs)
+      : null,
+    terminationReason: metadata?.termination_reason || null,
     outcome: normalizeOutcome(analysis?.call_successful),
     raw,
   };

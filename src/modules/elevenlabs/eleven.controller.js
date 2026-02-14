@@ -71,6 +71,8 @@ export const elevenController = {
         conversationId: normalizedPayload.conversationId,
         callSid: normalizedPayload.callSid,
         interactionId: normalizedPayload.interactionId,
+        callDurationSecs: normalizedPayload.callDurationSecs,
+        terminationReason: normalizedPayload.terminationReason,
       },
       'Accepted ElevenLabs post-call webhook'
     );

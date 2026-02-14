@@ -26,6 +26,19 @@ const centsToDisplayAmount = (amountCents) => {
   return Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
 };
 
+const PAYMENT_OPTION_LABELS = {
+  full: 'full amount in one payment',
+  half: '50% now and remainder later',
+  installments_4: 'up to 4 installments with minimum 25% upfront',
+};
+
+const PAYMENT_CHANNEL_LABELS = {
+  link: 'payment link',
+  card: 'debit/credit card',
+  transfer: 'bank transfer',
+  cash: 'cash (physical point)',
+};
+
 const toDateOnly = (value) => {
   if (!value) return null;
   const date = new Date(value);
@@ -58,6 +71,25 @@ const normalizeDynamicVariableValue = (value) => {
   return String(value);
 };
 
+const normalizeSelectionValues = (value, labelsMap = {}) => {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
+
+  const ids = rawItems.map((item) => String(item)).filter(Boolean);
+  const human = ids.map((id) => labelsMap[id] || id);
+
+  return {
+    ids: ids.join(','),
+    human: human.join(', '),
+  };
+};
+
 const buildCaseMetadataDynamicVariables = (meta = {}) => {
   const keys = [
     'notes',
@@ -77,11 +109,17 @@ const buildCaseMetadataDynamicVariables = (meta = {}) => {
     return result;
   }, {});
 
-  const paymentOptions = normalizeDynamicVariableValue(meta.options);
-  if (paymentOptions) acc.payment_options = paymentOptions;
+  const paymentOptions = normalizeSelectionValues(meta.options, PAYMENT_OPTION_LABELS);
+  if (paymentOptions.ids) {
+    acc.payment_options = paymentOptions.ids;
+    acc.payment_options_human = paymentOptions.human;
+  }
 
-  const paymentChannels = normalizeDynamicVariableValue(meta.channels);
-  if (paymentChannels) acc.payment_channels = paymentChannels;
+  const paymentChannels = normalizeSelectionValues(meta.channels, PAYMENT_CHANNEL_LABELS);
+  if (paymentChannels.ids) {
+    acc.payment_channels = paymentChannels.ids;
+    acc.payment_channels_human = paymentChannels.human;
+  }
 
   return acc;
 };
