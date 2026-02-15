@@ -21,7 +21,16 @@ export class ArPayment extends Model {
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
       },
-      { sequelize, modelName: 'ArPayment', tableName: 'ar_payments', timestamps: true, underscored: true }
+      {
+        sequelize,
+        modelName: 'ArPayment',
+        tableName: 'ar_payments',
+        timestamps: true,
+        underscored: true,
+        indexes: [
+          { unique: true, fields: ['pms_connection_id', 'external_id'], name: 'uq_ar_payments_connection_external' },
+        ],
+      }
     );
     return ArPayment;
   }

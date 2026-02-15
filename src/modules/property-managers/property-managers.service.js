@@ -5,7 +5,16 @@
  * Credentials are encrypted at rest (AES-256-GCM) and never returned to the client.
  */
 import { Op } from 'sequelize';
-import { PmsConnection, PmsDebtor, PmsLease, Software } from '../../models/index.js';
+import {
+  PmsConnection,
+  PmsDebtor,
+  PmsLease,
+  Software,
+  ArCharge,
+  ArPayment,
+  ArBalance,
+  ArAgingSnapshot,
+} from '../../models/index.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { getConnector, hasConnector } from './connectors/connector.factory.js';
 import { addPmsSyncJob } from '../../queues/pms-sync.queue.js';
@@ -41,6 +50,15 @@ export const propertyManagersService = {
         {
           association: 'software',
           attributes: ['id', 'key', 'name', 'authType', 'logoUrl'],
+        },
+        {
+          association: 'syncRuns',
+          where: { status: { [Op.in]: ['pending', 'running'] } },
+          required: false,
+          limit: 1,
+          order: [['startedAt', 'DESC']],
+          attributes: ['id', 'step', 'stats', 'status', 'startedAt'],
+          separate: true,
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -323,5 +341,135 @@ export const propertyManagersService = {
     });
 
     return { data: rows, total: count, limit, offset };
+  },
+
+  /**
+   * Stats for PM-Manager cards: counts (debtors, leases, charges, payments) and balances/aging summary.
+   */
+  getPmsStats: async (tenantId) => {
+    await ensureTenant(tenantId);
+    const [totalDebtors, totalLeases, totalCharges, totalPayments, balancesCount, latestSnapshot] = await Promise.all([
+      PmsDebtor.count({ where: { tenantId } }),
+      PmsLease.count({ where: { tenantId } }),
+      ArCharge.count({ where: { tenantId } }),
+      ArPayment.count({ where: { tenantId } }),
+      ArBalance.count({ where: { tenantId } }),
+      ArAgingSnapshot.findOne({
+        where: { tenantId },
+        order: [['asOfDate', 'DESC']],
+        attributes: ['asOfDate', 'totalCents', 'bucket030Cents', 'bucket3160Cents', 'bucket6190Cents', 'bucket90PlusCents'],
+      }),
+    ]);
+    const aging = latestSnapshot
+      ? {
+          asOfDate: latestSnapshot.asOfDate,
+          totalCents: Number(latestSnapshot.totalCents) || 0,
+          bucket030Cents: Number(latestSnapshot.bucket030Cents) || 0,
+          bucket3160Cents: Number(latestSnapshot.bucket3160Cents) || 0,
+          bucket6190Cents: Number(latestSnapshot.bucket6190Cents) || 0,
+          bucket90PlusCents: Number(latestSnapshot.bucket90PlusCents) || 0,
+        }
+      : null;
+    return {
+      totalDebtors,
+      totalLeases,
+      totalCharges,
+      totalPayments,
+      totalBalanceCents: aging?.totalCents ?? 0,
+      balancesCount,
+      aging,
+    };
+  },
+
+  /**
+   * List ar_charges for the tenant (paginated). Optional filter by connectionId, leaseId, sort.
+   */
+  listPmsCharges: async (tenantId, opts = {}) => {
+    await ensureTenant(tenantId);
+    const limit = Math.min(Number(opts.limit) || 50, 500);
+    const offset = Number(opts.offset) || 0;
+    const connectionId = opts.connectionId || null;
+    const sortBy = opts.sortBy && ['dueDate', 'postDate', 'amountCents', 'createdAt'].includes(opts.sortBy) ? opts.sortBy : 'dueDate';
+    const sortOrder = opts.sortOrder === 'asc' ? 'ASC' : 'DESC';
+
+    const where = { tenantId };
+    if (connectionId) where.pmsConnectionId = connectionId;
+
+    const { rows, count } = await ArCharge.findAndCountAll({
+      where,
+      limit,
+      offset,
+      order: [[sortBy, sortOrder]],
+      include: [
+        {
+          association: 'pmsLease',
+          attributes: ['id', 'leaseNumber', 'status', 'externalId'],
+          required: false,
+          include: [
+            { association: 'pmsDebtor', attributes: ['id', 'displayName', 'email'], required: false },
+          ],
+        },
+      ],
+    });
+
+    return { data: rows, total: count, limit, offset };
+  },
+
+  /**
+   * Balances and aging summary for the tenant (lease-level balances + aging snapshot).
+   */
+  getPmsBalancesSummary: async (tenantId) => {
+    await ensureTenant(tenantId);
+    const latestSnapshot = await ArAgingSnapshot.findOne({
+      where: { tenantId },
+      order: [['asOfDate', 'DESC']],
+      attributes: ['asOfDate', 'totalCents', 'bucket030Cents', 'bucket3160Cents', 'bucket6190Cents', 'bucket90PlusCents', 'currency'],
+    });
+    const asOfDate = latestSnapshot?.asOfDate ?? null;
+    const latestDate = asOfDate;
+    const leaseBalances = latestDate
+      ? await ArBalance.findAll({
+          where: { tenantId, asOfDate: latestDate },
+          attributes: ['id', 'pmsLeaseId', 'balanceCents', 'asOfDate', 'currency'],
+          include: [
+            {
+              association: 'pmsLease',
+              attributes: ['id', 'leaseNumber', 'externalId'],
+              required: false,
+              include: [{ association: 'pmsDebtor', attributes: ['id', 'displayName'], required: false }],
+            },
+          ],
+        })
+      : [];
+
+    const aging = latestSnapshot
+      ? {
+          asOfDate: latestSnapshot.asOfDate,
+          totalCents: Number(latestSnapshot.totalCents) || 0,
+          bucket030Cents: Number(latestSnapshot.bucket030Cents) || 0,
+          bucket3160Cents: Number(latestSnapshot.bucket3160Cents) || 0,
+          bucket6190Cents: Number(latestSnapshot.bucket6190Cents) || 0,
+          bucket90PlusCents: Number(latestSnapshot.bucket90PlusCents) || 0,
+          currency: latestSnapshot.currency || 'USD',
+        }
+      : null;
+
+    return {
+      asOfDate: latestDate,
+      totalCents: aging?.totalCents ?? leaseBalances.reduce((s, b) => s + Number(b.balanceCents || 0), 0),
+      currency: 'USD',
+      aging,
+      leaseBalances: leaseBalances.map((b) => {
+        const plain = b.get ? b.get({ plain: true }) : b;
+        return {
+          id: plain.id,
+          pmsLeaseId: plain.pmsLeaseId,
+          balanceCents: Number(plain.balanceCents) || 0,
+          asOfDate: plain.asOfDate,
+          currency: plain.currency || 'USD',
+          pmsLease: plain.pmsLease,
+        };
+      }),
+    };
   },
 };

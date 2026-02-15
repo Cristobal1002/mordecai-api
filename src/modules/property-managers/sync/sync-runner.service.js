@@ -390,10 +390,11 @@ async function syncCharges(connectionId, tenantId, data, syncRunId, transaction)
       'PMS sync: some charges skipped (lease not found)'
     );
   }
+  const run = await SyncRun.findByPk(syncRunId, { attributes: ['stats'], transaction });
   await SyncRun.update(
     {
       step: 'charges',
-      stats: { ...(data.stats || {}), chargesCreated: created, chargesUpdated: updated, chargesSkipped: skipped },
+      stats: { ...(run?.stats || {}), ...(data.stats || {}), chargesCreated: created, chargesUpdated: updated, chargesSkipped: skipped },
     },
     { where: { id: syncRunId }, transaction }
   );
@@ -428,8 +429,9 @@ async function syncPayments(connectionId, tenantId, data, syncRunId, transaction
     if (wasCreated) created++;
     else updated++;
   }
+  const run = await SyncRun.findByPk(syncRunId, { attributes: ['stats'], transaction });
   await SyncRun.update(
-    { step: 'payments', stats: { ...(data.stats || {}), paymentsCreated: created, paymentsUpdated: updated } },
+    { step: 'payments', stats: { ...(run?.stats || {}), ...(data.stats || {}), paymentsCreated: created, paymentsUpdated: updated } },
     { where: { id: syncRunId }, transaction }
   );
   return { paymentsCreated: created, paymentsUpdated: updated };
@@ -474,7 +476,7 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, 
   for (const lease of leases) {
     const charges = await ArCharge.findAll({
       where: { pmsLeaseId: lease.id },
-      attributes: ['amountCents', 'dueDate'],
+      attributes: ['amountCents', 'openAmountCents', 'dueDate', 'postDate'],
       transaction,
     });
     const payments = await ArPayment.findAll({
@@ -508,10 +510,13 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, 
 
     const today = new Date(asOfDate);
     for (const c of charges) {
-      const due = new Date(c.dueDate);
+      const dueDateOrPost = c.dueDate || c.postDate;
+      if (!dueDateOrPost) continue;
+      const due = new Date(dueDateOrPost);
       const daysPastDue = Math.floor((today - due) / (24 * 60 * 60 * 1000));
       if (daysPastDue < 0) continue;
-      const amt = Number(c.amountCents);
+      const amt = Number(c.openAmountCents ?? c.amountCents);
+      if (amt <= 0) continue;
       if (daysPastDue <= 30) buckets['0_30'] += amt;
       else if (daysPastDue <= 60) buckets['31_60'] += amt;
       else if (daysPastDue <= 90) buckets['61_90'] += amt;
@@ -534,10 +539,11 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, 
     { transaction, conflictFields: ['pms_connection_id', 'as_of_date'] }
   );
 
+  const run = await SyncRun.findByPk(syncRunId, { attributes: ['stats'], transaction });
   await SyncRun.update(
     {
       step: 'balances_aging',
-      stats: { totalCents, ...buckets },
+      stats: { ...(run?.stats || {}), totalCents, ...buckets },
     },
     { where: { id: syncRunId }, transaction }
   );
@@ -631,54 +637,50 @@ export async function runSync(connectionId, options = {}) {
       'PMS sync: data received from connector'
     );
 
-    const t2 = await sequelize.transaction();
-    try {
-      if (stepsToRun.includes('debtors_leases')) {
-        logger.info({ connectionId, syncRunId: syncRun.id, step: '1/4' }, 'PMS sync: step debtors_leases');
-        const step1Stats = await syncDebtorsAndLeases(connectionId, tenantId, dataNorm, syncRun.id, t2);
-        logger.info(
-          { connectionId, syncRunId: syncRun.id, step: 'debtors_leases', ...step1Stats },
-          'PMS sync: step debtors_leases done'
+    // One transaction per step so data and SyncRun.step are visible after each step (UI can show progress and refetch).
+    for (const stepName of stepsToRun) {
+      const t = await sequelize.transaction();
+      try {
+        if (stepName === 'debtors_leases') {
+          logger.info({ connectionId, syncRunId: syncRun.id, step: '1/4' }, 'PMS sync: step debtors_leases');
+          const step1Stats = await syncDebtorsAndLeases(connectionId, tenantId, dataNorm, syncRun.id, t);
+          logger.info(
+            { connectionId, syncRunId: syncRun.id, step: 'debtors_leases', ...step1Stats },
+            'PMS sync: step debtors_leases done'
+          );
+        } else if (stepName === 'charges') {
+          logger.info({ connectionId, syncRunId: syncRun.id, step: '2/4' }, 'PMS sync: step charges');
+          const step2Stats = await syncCharges(connectionId, tenantId, dataNorm, syncRun.id, t);
+          logger.info(
+            { connectionId, syncRunId: syncRun.id, step: 'charges', ...step2Stats },
+            'PMS sync: step charges done'
+          );
+        } else if (stepName === 'payments') {
+          logger.info({ connectionId, syncRunId: syncRun.id, step: '3/4' }, 'PMS sync: step payments');
+          const step3Stats = await syncPayments(connectionId, tenantId, dataNorm, syncRun.id, t);
+          logger.info(
+            { connectionId, syncRunId: syncRun.id, step: 'payments', ...step3Stats },
+            'PMS sync: step payments done'
+          );
+        } else if (stepName === 'balances_aging') {
+          logger.info({ connectionId, syncRunId: syncRun.id, step: '4/4' }, 'PMS sync: step balances_aging');
+          const step4Stats = await computeBalancesAndAging(connectionId, tenantId, syncRun.id, dataNorm, t);
+          logger.info(
+            { connectionId, syncRunId: syncRun.id, step: 'balances_aging', ...step4Stats },
+            'PMS sync: step balances_aging done'
+          );
+        }
+        await t.commit();
+      } catch (err) {
+        await t.rollback();
+        logger.error(
+          { err, connectionId, syncRunId: syncRun.id, step: stepName },
+          'PMS sync: step failed, transaction rolled back'
         );
+        throw err;
       }
-
-      if (stepsToRun.includes('charges')) {
-        logger.info({ connectionId, syncRunId: syncRun.id, step: '2/4' }, 'PMS sync: step charges');
-        const step2Stats = await syncCharges(connectionId, tenantId, dataNorm, syncRun.id, t2);
-        logger.info(
-          { connectionId, syncRunId: syncRun.id, step: 'charges', ...step2Stats },
-          'PMS sync: step charges done'
-        );
-      }
-
-      if (stepsToRun.includes('payments')) {
-        logger.info({ connectionId, syncRunId: syncRun.id, step: '3/4' }, 'PMS sync: step payments');
-        const step3Stats = await syncPayments(connectionId, tenantId, dataNorm, syncRun.id, t2);
-        logger.info(
-          { connectionId, syncRunId: syncRun.id, step: 'payments', ...step3Stats },
-          'PMS sync: step payments done'
-        );
-      }
-
-      if (stepsToRun.includes('balances_aging')) {
-        logger.info({ connectionId, syncRunId: syncRun.id, step: '4/4' }, 'PMS sync: step balances_aging');
-        const step4Stats = await computeBalancesAndAging(connectionId, tenantId, syncRun.id, dataNorm, t2);
-        logger.info(
-          { connectionId, syncRunId: syncRun.id, step: 'balances_aging', ...step4Stats },
-          'PMS sync: step balances_aging done'
-        );
-      }
-
-      await t2.commit();
-      logger.info({ connectionId, syncRunId: syncRun.id, steps: stepsToRun }, 'PMS sync: steps committed');
-    } catch (err) {
-      await t2.rollback();
-      logger.error(
-        { err, connectionId, syncRunId: syncRun.id, step: 'sync_steps' },
-        'PMS sync: step failed, transaction rolled back'
-      );
-      throw err;
     }
+    logger.info({ connectionId, syncRunId: syncRun.id, steps: stepsToRun }, 'PMS sync: steps committed');
 
     const now = new Date();
     const prevState = connection.syncState ?? {};

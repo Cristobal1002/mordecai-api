@@ -154,4 +154,46 @@ export const rentvineMapper = {
       unitNumber: u.name?.trim() || u.unit_number || String(u.unitID),
     };
   },
+
+  /**
+   * Map leases/export item.unpaidCharges[] to canonical charges for ar_charges.
+   * Each charge: external_id = transactionID, leaseExternalId = lease.leaseID, amount/openAmount in cents.
+   * MVP: dueDate from charge or datePosted (posted-date aging until Rentvine sends dueDate).
+   */
+  mapLeaseExportUnpaidCharges(item) {
+    const lease = item?.lease;
+    const rawCharges = item?.unpaidCharges;
+    if (!lease?.leaseID || !Array.isArray(rawCharges)) return [];
+    const leaseExternalId = String(lease.leaseID);
+    const out = [];
+    for (const c of rawCharges) {
+      const externalId = c.transactionID != null ? String(c.transactionID) : c.id != null ? String(c.id) : null;
+      if (!externalId) continue;
+      const amount = parseFloat(c.amount, 10);
+      if (Number.isNaN(amount) || amount < 0) continue;
+      const amountPaid = parseFloat(c.amountPaid ?? c.amountApplied ?? 0, 10);
+      const openAmount = Math.max(0, amount - (Number.isNaN(amountPaid) ? 0 : amountPaid));
+      const amountCents = Math.round(amount * 100);
+      const openAmountCents = Math.round(openAmount * 100);
+      const datePosted = c.datePosted ?? c.postDate ?? c.date ?? null;
+      const dueDate = c.dueDate ?? datePosted;
+      const postDate = datePosted ? String(datePosted).slice(0, 10) : null;
+      const dueDateOnly = dueDate ? String(dueDate).slice(0, 10) : postDate;
+      if (!dueDateOnly) continue;
+      const chargeType = c.isRent === true || c.isRent === '1' ? 'rent' : (c.accountName?.trim() || 'fee');
+      out.push({
+        externalId,
+        leaseExternalId,
+        chargeType: chargeType.slice(0, 64),
+        amountCents,
+        openAmountCents,
+        currency: 'USD',
+        dueDate: dueDateOnly,
+        postDate,
+        description: c.description?.trim() || null,
+        lastExternalUpdatedAt: c.dateTimeModified ? new Date(c.dateTimeModified) : null,
+      });
+    }
+    return out;
+  },
 };

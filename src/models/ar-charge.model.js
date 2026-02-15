@@ -23,7 +23,16 @@ export class ArCharge extends Model {
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
       },
-      { sequelize, modelName: 'ArCharge', tableName: 'ar_charges', timestamps: true, underscored: true }
+      {
+        sequelize,
+        modelName: 'ArCharge',
+        tableName: 'ar_charges',
+        timestamps: true,
+        underscored: true,
+        indexes: [
+          { unique: true, fields: ['pms_connection_id', 'external_id'], name: 'uq_ar_charges_connection_external' },
+        ],
+      }
     );
     return ArCharge;
   }

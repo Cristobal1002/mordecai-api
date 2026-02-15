@@ -11,6 +11,9 @@ import {
   triggerSyncValidator,
   listPmsDebtorsValidator,
   listPmsLeasesValidator,
+  getPmsStatsValidator,
+  listPmsChargesValidator,
+  getPmsBalancesSummaryValidator,
 } from './property-managers.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 import { requireAuth } from '../../middlewares/index.js';
@@ -33,6 +36,33 @@ router.get(
   listPmsLeasesValidator,
   validateRequest,
   propertyManagersController.listPmsLeases
+);
+
+// GET /api/v1/tenants/:tenantId/pms-stats
+router.get(
+  '/:tenantId/pms-stats',
+  requireAuth(),
+  getPmsStatsValidator,
+  validateRequest,
+  propertyManagersController.getPmsStats
+);
+
+// GET /api/v1/tenants/:tenantId/pms-charges
+router.get(
+  '/:tenantId/pms-charges',
+  requireAuth(),
+  listPmsChargesValidator,
+  validateRequest,
+  propertyManagersController.listPmsCharges
+);
+
+// GET /api/v1/tenants/:tenantId/pms-balances-summary
+router.get(
+  '/:tenantId/pms-balances-summary',
+  requireAuth(),
+  getPmsBalancesSummaryValidator,
+  validateRequest,
+  propertyManagersController.getPmsBalancesSummary
 );
 
 // GET /api/v1/tenants/:tenantId/pms-connections
