@@ -5,6 +5,15 @@ import { propertyManagersService } from './property-managers.service.js';
 function sanitizeConnection(connection) {
   const plain = connection?.get ? connection.get({ plain: true }) : connection;
   if (!plain) return plain;
+  const activeSyncRun = plain.syncRuns?.[0]
+    ? {
+        id: plain.syncRuns[0].id,
+        step: plain.syncRuns[0].step,
+        stats: plain.syncRuns[0].stats,
+        status: plain.syncRuns[0].status,
+        startedAt: plain.syncRuns[0].startedAt,
+      }
+    : null;
   return {
     id: plain.id,
     tenantId: plain.tenantId,
@@ -18,6 +27,7 @@ function sanitizeConnection(connection) {
     updatedAt: plain.updatedAt,
     software: plain.software,
     credentials: null,
+    activeSyncRun,
   };
 }
 
@@ -169,6 +179,43 @@ export const propertyManagersController = {
         sortOrder: sortOrder || undefined,
       });
       res.ok(result, 'PMS leases retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  getPmsStats: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const data = await propertyManagersService.getPmsStats(tenantId);
+      res.ok(data, 'PMS stats retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  listPmsCharges: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const { connectionId, limit, offset, sortBy, sortOrder } = req.query;
+      const result = await propertyManagersService.listPmsCharges(tenantId, {
+        connectionId: connectionId || undefined,
+        limit,
+        offset,
+        sortBy: sortBy || undefined,
+        sortOrder: sortOrder || undefined,
+      });
+      res.ok(result, 'PMS charges retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  getPmsBalancesSummary: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const data = await propertyManagersService.getPmsBalancesSummary(tenantId);
+      res.ok(data, 'PMS balances summary retrieved successfully');
     } catch (error) {
       next(error);
     }

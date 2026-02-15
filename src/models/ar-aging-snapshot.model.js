@@ -29,7 +29,7 @@ export class ArAgingSnapshot extends Model {
         updatedAt: false,
         underscored: true,
         indexes: [
-          { unique: true, fields: ['pms_connection_id', 'as_of_date'], name: 'uq_ar_aging_snapshots_connection_date' },
+          { unique: true, fields: ['pms_connection_id', 'as_of_date'], name: 'uq_ar_aging_snapshots_connection_as_of' },
         ],
       }
     );

@@ -92,3 +92,17 @@ export const listPmsLeasesValidator = [
   query('sortBy').optional().isIn(LEASE_SORT_FIELDS).withMessage(`sortBy must be one of: ${LEASE_SORT_FIELDS.join(', ')}`),
   query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
 ];
+
+export const getPmsStatsValidator = [tenantIdParam];
+
+const CHARGE_SORT_FIELDS = ['dueDate', 'postDate', 'amountCents', 'createdAt'];
+export const listPmsChargesValidator = [
+  tenantIdParam,
+  query('connectionId').optional().isUUID().withMessage('connectionId must be a valid UUID'),
+  query('limit').optional().isInt({ min: 1, max: 500 }).withMessage('limit must be between 1 and 500'),
+  query('offset').optional().isInt({ min: 0 }).withMessage('offset must be a non-negative integer'),
+  query('sortBy').optional().isIn(CHARGE_SORT_FIELDS).withMessage(`sortBy must be one of: ${CHARGE_SORT_FIELDS.join(', ')}`),
+  query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
+];
+
+export const getPmsBalancesSummaryValidator = [tenantIdParam];

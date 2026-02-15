@@ -24,7 +24,7 @@ export class ArBalance extends Model {
         timestamps: true,
         underscored: true,
         indexes: [
-          { unique: true, fields: ['pms_lease_id', 'as_of_date'], name: 'uq_ar_balances_lease_as_of_date' },
+          { unique: true, fields: ['pms_lease_id', 'as_of_date'], name: 'uq_ar_balances_lease_as_of' },
         ],
       }
     );
