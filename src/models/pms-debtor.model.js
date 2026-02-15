@@ -25,7 +25,16 @@ export class PmsDebtor extends Model {
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
       },
-      { sequelize, modelName: 'PmsDebtor', tableName: 'pms_debtors', timestamps: true, underscored: true }
+      {
+        sequelize,
+        modelName: 'PmsDebtor',
+        tableName: 'pms_debtors',
+        timestamps: true,
+        underscored: true,
+        indexes: [
+          { unique: true, fields: ['pms_connection_id', 'external_id'], name: 'uq_pms_debtors_connection_external' },
+        ],
+      }
     );
     return PmsDebtor;
   }

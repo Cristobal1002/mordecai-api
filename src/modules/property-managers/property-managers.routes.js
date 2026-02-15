@@ -9,11 +9,31 @@ import {
   testConnectionValidator,
   testCredentialsValidator,
   triggerSyncValidator,
+  listPmsDebtorsValidator,
+  listPmsLeasesValidator,
 } from './property-managers.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 import { requireAuth } from '../../middlewares/index.js';
 
 const router = Router();
+
+// GET /api/v1/tenants/:tenantId/pms-debtors
+router.get(
+  '/:tenantId/pms-debtors',
+  requireAuth(),
+  listPmsDebtorsValidator,
+  validateRequest,
+  propertyManagersController.listPmsDebtors
+);
+
+// GET /api/v1/tenants/:tenantId/pms-leases
+router.get(
+  '/:tenantId/pms-leases',
+  requireAuth(),
+  listPmsLeasesValidator,
+  validateRequest,
+  propertyManagersController.listPmsLeases
+);
 
 // GET /api/v1/tenants/:tenantId/pms-connections
 router.get(

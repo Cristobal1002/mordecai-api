@@ -20,7 +20,18 @@ export class ArAgingSnapshot extends Model {
         meta: { type: DataTypes.JSONB, defaultValue: {} },
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
       },
-      { sequelize, modelName: 'ArAgingSnapshot', tableName: 'ar_aging_snapshots', timestamps: true, createdAt: true, updatedAt: false, underscored: true }
+      {
+        sequelize,
+        modelName: 'ArAgingSnapshot',
+        tableName: 'ar_aging_snapshots',
+        timestamps: true,
+        createdAt: true,
+        updatedAt: false,
+        underscored: true,
+        indexes: [
+          { unique: true, fields: ['pms_connection_id', 'as_of_date'], name: 'uq_ar_aging_snapshots_connection_date' },
+        ],
+      }
     );
     return ArAgingSnapshot;
   }

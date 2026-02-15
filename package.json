@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Backend for the Mordcai software",
   "main": "app.js",
+  "files": ["app.js", "src", "migrations"],
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",

@@ -1,4 +1,4 @@
-import { body, param } from 'express-validator';
+import { body, param, query } from 'express-validator';
 
 const connectionIdParam = param('connectionId')
   .isUUID()
@@ -51,4 +51,44 @@ export const testCredentialsValidator = [
   body('credentials').isObject().withMessage('credentials must be an object'),
 ];
 
-export const triggerSyncValidator = [tenantIdParam, connectionIdParam];
+const SYNC_STEPS = ['debtors_leases', 'charges', 'payments', 'balances_aging'];
+
+export const triggerSyncValidator = [
+  tenantIdParam,
+  connectionIdParam,
+  body('steps')
+    .optional()
+    .isArray()
+    .withMessage('steps must be an array'),
+  body('steps.*')
+    .optional()
+    .isIn(SYNC_STEPS)
+    .withMessage(`each step must be one of: ${SYNC_STEPS.join(', ')}`),
+];
+
+const SORT_FIELDS = ['displayName', 'email', 'createdAt'];
+const SORT_ORDERS = ['asc', 'desc'];
+
+export const listPmsDebtorsValidator = [
+  tenantIdParam,
+  query('connectionId').optional().isUUID().withMessage('connectionId must be a valid UUID'),
+  query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('limit must be between 1 and 1000'),
+  query('offset').optional().isInt({ min: 0 }).withMessage('offset must be a non-negative integer'),
+  query('search').optional().isString().trim().isLength({ max: 200 }).withMessage('search must be at most 200 characters'),
+  query('sortBy').optional().isIn(SORT_FIELDS).withMessage(`sortBy must be one of: ${SORT_FIELDS.join(', ')}`),
+  query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
+];
+
+const LEASE_SORT_FIELDS = ['leaseNumber', 'status', 'moveInDate', 'createdAt'];
+const LEASE_STATUS_FILTERS = ['active', 'ended', 'pending'];
+
+export const listPmsLeasesValidator = [
+  tenantIdParam,
+  query('connectionId').optional().isUUID().withMessage('connectionId must be a valid UUID'),
+  query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('limit must be between 1 and 1000'),
+  query('offset').optional().isInt({ min: 0 }).withMessage('offset must be a non-negative integer'),
+  query('search').optional().isString().trim().isLength({ max: 200 }).withMessage('search must be at most 200 characters'),
+  query('status').optional().isIn(LEASE_STATUS_FILTERS).withMessage(`status must be one of: ${LEASE_STATUS_FILTERS.join(', ')}`),
+  query('sortBy').optional().isIn(LEASE_SORT_FIELDS).withMessage(`sortBy must be one of: ${LEASE_SORT_FIELDS.join(', ')}`),
+  query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
+];

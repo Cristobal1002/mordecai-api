@@ -1,7 +1,38 @@
 /**
  * Rentvine mapper — transforma respuestas del PMS al modelo canónico.
+ * tenants/search returns array of { contact: { contactID, name, email, phone, address, ... } }.
  */
 export const rentvineMapper = {
+  /**
+   * Map one tenants/search item to canonical debtor for pms_debtors.
+   */
+  mapTenantContactToCanonicalDebtor(item) {
+    const c = item?.contact;
+    if (!c) return null;
+    const address = {
+      line1: c.address ?? null,
+      line2: c.address2 ?? null,
+      city: c.city ?? null,
+      state: c.stateID ?? null,
+      postalCode: c.postalCode ?? null,
+      country: c.countryID ?? null,
+    };
+    return {
+      externalId: String(c.contactID ?? c.contactId ?? ''),
+      displayName: c.name?.trim() || 'Unknown',
+      type: 'person',
+      email: c.email?.trim() || null,
+      phone: c.phone?.trim() || null,
+      address,
+      language: null,
+      timezone: null,
+      doNotContact: c.isActive === '0',
+      doNotCall: false,
+      meta: {},
+      lastExternalUpdatedAt: c.dateTimeModified ? new Date(c.dateTimeModified) : null,
+    };
+  },
+
   toCanonicalUnit(raw) {
     if (!raw) return null;
     return {
@@ -31,6 +62,96 @@ export const rentvineMapper = {
       dueDate: raw.due_date ?? raw.as_of_date,
       externalId: raw.id?.toString(),
       metadata: raw,
+    };
+  },
+
+  /**
+   * Map one leases/export item to canonical lease for pms_leases.
+   * Item: { lease, balances, unpaidCharges, property, unit, portfolio }.
+   * Links to debtor via lease.tenants[0].contactID (same as debtors externalId from tenants/search).
+   */
+  mapLeaseExportItemToCanonical(item) {
+    const lease = item?.lease;
+    if (!lease?.leaseID) return null;
+
+    const primaryTenant = Array.isArray(lease.tenants) ? lease.tenants.find((t) => t.isActive) || lease.tenants[0] : null;
+    const debtorExternalId = primaryTenant?.contactID != null ? String(primaryTenant.contactID) : null;
+    if (!debtorExternalId) return null;
+
+    const closedDate = lease.closedDate ? String(lease.closedDate).trim() : null;
+    const moveOut = lease.moveOutDate ? String(lease.moveOutDate).trim() : null;
+    const today = new Date().toISOString().slice(0, 10);
+    const status = closedDate ? 'ended' : moveOut && moveOut < today ? 'ended' : 'active';
+    const isActive = status === 'active';
+
+    const property = item?.property;
+    const unit = item?.unit;
+
+    return {
+      externalId: String(lease.leaseID),
+      debtorExternalId,
+      leaseNumber: lease.code?.trim() || String(lease.leaseID),
+      status,
+      isActive,
+      propertyExternalId: property?.propertyID != null ? String(property.propertyID) : undefined,
+      unitExternalId: unit?.unitID != null ? String(unit.unitID) : undefined,
+      moveInDate: lease.moveInDate ? String(lease.moveInDate).trim() : null,
+      moveOutDate: moveOut || null,
+      lastExternalUpdatedAt: lease.dateTimeModified ? new Date(lease.dateTimeModified) : null,
+    };
+  },
+
+  /**
+   * Extract balance from leases/export item for ArBalance.
+   * Uses balances.unpaidTotalAmount → balanceCents (stored in ar_balances).
+   * Other fields available for future use: unpaidRentAmount, pastDueTotalAmount, pastDueRentAmount.
+   */
+  mapLeaseExportBalance(item, leaseExternalId) {
+    const lease = item?.lease;
+    const balances = item?.balances;
+    if (!lease?.leaseID || !balances) return null;
+    const externalId = leaseExternalId ?? String(lease.leaseID);
+    const unpaidTotal = parseFloat(balances.unpaidTotalAmount, 10);
+    if (Number.isNaN(unpaidTotal) || unpaidTotal < 0) return null;
+    const balanceCents = Math.round(unpaidTotal * 100);
+    return {
+      leaseExternalId: externalId,
+      balanceCents,
+      asOfDate: new Date().toISOString().slice(0, 10),
+    };
+  },
+
+  /**
+   * Map leases/export item.property to canonical property for pms_properties.
+   */
+  mapLeaseExportProperty(item) {
+    const p = item?.property;
+    if (!p?.propertyID) return null;
+    return {
+      externalId: String(p.propertyID),
+      name: p.name?.trim() || null,
+      address: {
+        line1: p.address ?? (p.streetNumber && p.streetName ? `${p.streetNumber} ${p.streetName}` : null),
+        line2: p.address2 ?? null,
+        city: p.city ?? null,
+        state: p.stateID ?? null,
+        postalCode: p.postalCode ?? null,
+        country: p.countryID ?? null,
+      },
+    };
+  },
+
+  /**
+   * Map leases/export item.unit to canonical unit for pms_units (needs propertyExternalId from same item).
+   */
+  mapLeaseExportUnit(item) {
+    const u = item?.unit;
+    const p = item?.property;
+    if (!u?.unitID) return null;
+    return {
+      externalId: String(u.unitID),
+      propertyExternalId: p?.propertyID != null ? String(p.propertyID) : undefined,
+      unitNumber: u.name?.trim() || u.unit_number || String(u.unitID),
     };
   },
 };
