@@ -95,12 +95,34 @@ async function resolveInternalId(connectionId, entityType, externalId, transacti
   return null;
 }
 
+/** resolveInternalId with an in-memory cache to avoid repeated DB lookups for the same externalId. */
+async function resolveInternalIdCached(connectionId, entityType, externalId, transaction, cache) {
+  const key = `${entityType}:${externalId}`;
+  if (cache.has(key)) return cache.get(key);
+  const id = await resolveInternalId(connectionId, entityType, externalId, transaction);
+  cache.set(key, id);
+  return id;
+}
+
 /**
- * Step 1: Sync debtors and leases from connector result; upsert and write external_mappings.
+ * Step 1: Sync debtors, properties, units and leases from connector result; upsert and write external_mappings.
+ * Properties and units come from leases/export (Rentvine) so leases can link to them.
  */
 async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, transaction) {
-  const stats = { debtorsCreated: 0, debtorsUpdated: 0, leasesCreated: 0, leasesUpdated: 0, leasesSkipped: 0 };
+  const stats = {
+    debtorsCreated: 0,
+    debtorsUpdated: 0,
+    propertiesCreated: 0,
+    propertiesUpdated: 0,
+    unitsCreated: 0,
+    unitsUpdated: 0,
+    leasesCreated: 0,
+    leasesUpdated: 0,
+    leasesSkipped: 0,
+  };
   const debtors = data.debtors || [];
+  const properties = data.properties || [];
+  const units = data.units || [];
   const leases = data.leases || [];
 
   for (const d of debtors) {
@@ -131,8 +153,121 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
     }
   }
 
-  for (const l of leases) {
-    const pmsDebtorId = await resolveInternalId(connectionId, 'debtor', l.debtorExternalId, transaction);
+  const existingProperties = await PmsProperty.findAll({
+    where: { pmsConnectionId: connectionId },
+    attributes: ['id', 'externalId'],
+    transaction,
+  });
+  const existingPropsByExternal = new Map(existingProperties.map((r) => [r.externalId, r]));
+  const propToCreate = [];
+  const propToUpdate = [];
+  for (const p of properties) {
+    const payload = {
+      tenantId,
+      pmsConnectionId: connectionId,
+      externalId: p.externalId,
+      name: p.name ?? null,
+      address: p.address ?? {},
+    };
+    const existing = existingPropsByExternal.get(p.externalId);
+    if (existing) {
+      propToUpdate.push({ id: existing.id, payload: { name: payload.name, address: payload.address } });
+    } else {
+      propToCreate.push(payload);
+    }
+  }
+  const BULK_CHUNK = 100;
+  for (let i = 0; i < propToCreate.length; i += BULK_CHUNK) {
+    const chunk = propToCreate.slice(i, i + BULK_CHUNK);
+    const created = await PmsProperty.bulkCreate(chunk, { transaction });
+    stats.propertiesCreated += created.length;
+    for (const row of created) {
+      await upsertExternalMapping(connectionId, 'property', row.externalId, 'pms_property', row.id, transaction);
+    }
+  }
+  const UPDATE_BATCH = 50;
+  for (let i = 0; i < propToUpdate.length; i += UPDATE_BATCH) {
+    const batch = propToUpdate.slice(i, i + UPDATE_BATCH);
+    await Promise.all(batch.map(({ id, payload }) => PmsProperty.update(payload, { where: { id }, transaction })));
+    stats.propertiesUpdated += batch.length;
+  }
+
+  const existingUnits = await PmsUnit.findAll({
+    where: { pmsConnectionId: connectionId },
+    attributes: ['id', 'externalId'],
+    transaction,
+  });
+  const existingUnitsByExternal = new Map(existingUnits.map((r) => [r.externalId, r]));
+  const unitToCreate = [];
+  const unitToUpdate = [];
+  const propertyIdCache = new Map();
+  for (const u of units) {
+    let pmsPropertyId = null;
+    if (u.propertyExternalId) {
+      if (!propertyIdCache.has(u.propertyExternalId)) {
+        propertyIdCache.set(
+          u.propertyExternalId,
+          await resolveInternalId(connectionId, 'property', u.propertyExternalId, transaction)
+        );
+      }
+      pmsPropertyId = propertyIdCache.get(u.propertyExternalId);
+    }
+    const rawUnitNumber = u.unitNumber ?? null;
+    const unitNumber =
+      rawUnitNumber != null && String(rawUnitNumber).length > 64
+        ? String(rawUnitNumber).slice(0, 64)
+        : rawUnitNumber;
+    const payload = {
+      tenantId,
+      pmsConnectionId: connectionId,
+      pmsPropertyId: pmsPropertyId ?? null,
+      externalId: u.externalId,
+      unitNumber,
+    };
+    const existing = existingUnitsByExternal.get(u.externalId);
+    if (existing) {
+      unitToUpdate.push({ id: existing.id, payload: { pmsPropertyId: payload.pmsPropertyId, unitNumber: payload.unitNumber } });
+    } else {
+      unitToCreate.push(payload);
+    }
+  }
+  for (let i = 0; i < unitToCreate.length; i += BULK_CHUNK) {
+    const chunk = unitToCreate.slice(i, i + BULK_CHUNK);
+    const created = await PmsUnit.bulkCreate(chunk, { transaction });
+    stats.unitsCreated += created.length;
+    for (const row of created) {
+      await upsertExternalMapping(connectionId, 'unit', row.externalId, 'pms_unit', row.id, transaction);
+    }
+  }
+  for (let i = 0; i < unitToUpdate.length; i += UPDATE_BATCH) {
+    const batch = unitToUpdate.slice(i, i + UPDATE_BATCH);
+    await Promise.all(batch.map(({ id, payload }) => PmsUnit.update(payload, { where: { id }, transaction })));
+    stats.unitsUpdated += batch.length;
+  }
+
+  const resolveCache = new Map();
+  const existingLeases = await PmsLease.findAll({
+    where: { pmsConnectionId: connectionId },
+    attributes: ['id', 'externalId'],
+    transaction,
+  });
+  const existingByExternal = new Map(existingLeases.map((r) => [r.externalId, r]));
+
+  const toCreate = [];
+  const toUpdate = [];
+
+  for (let i = 0; i < leases.length; i++) {
+    const l = leases[i];
+    if (i > 0 && i % 100 === 0) {
+      logger.debug({ connectionId, syncRunId, processed: i, total: leases.length }, 'PMS sync: leases progress');
+    }
+    const pmsDebtorId = await resolveInternalIdCached(
+      connectionId,
+      'debtor',
+      l.debtorExternalId,
+      transaction,
+      resolveCache
+    );
     if (!pmsDebtorId) {
       stats.leasesSkipped++;
       logger.debug(
@@ -142,37 +277,62 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
       continue;
     }
     const pmsPropertyId = l.propertyExternalId
-      ? await resolveInternalId(connectionId, 'property', l.propertyExternalId, transaction)
+      ? await resolveInternalIdCached(
+          connectionId,
+          'property',
+          l.propertyExternalId,
+          transaction,
+          resolveCache
+        )
       : null;
     const pmsUnitId = l.unitExternalId
-      ? await resolveInternalId(connectionId, 'unit', l.unitExternalId, transaction)
+      ? await resolveInternalIdCached(connectionId, 'unit', l.unitExternalId, transaction, resolveCache)
       : null;
     const status =
       l.isActive === false ? 'ended' : l.isActive === true ? 'active' : (l.status ?? 'active');
-    const [instance, created] = await PmsLease.upsert(
-      {
-        tenantId,
-        pmsConnectionId: connectionId,
-        pmsDebtorId,
-        pmsPropertyId: pmsPropertyId ?? null,
-        pmsUnitId: pmsUnitId ?? null,
-        externalId: l.externalId,
-        leaseNumber: l.leaseNumber ?? null,
-        status,
-        moveInDate: l.moveInDate ?? null,
-        moveOutDate: l.moveOutDate ?? null,
-        lastNoteSummary: l.lastNoteSummary ?? null,
-        inCollections: l.inCollections ?? false,
-        lastExternalUpdatedAt: l.lastExternalUpdatedAt ?? null,
-      },
-      { transaction, conflictFields: ['pms_connection_id', 'external_id'] }
-    );
-    const id = instance?.id ?? (await PmsLease.findOne({ where: { pmsConnectionId: connectionId, externalId: l.externalId }, transaction }))?.id;
-    if (id) {
-      await upsertExternalMapping(connectionId, 'lease', l.externalId, 'pms_lease', id, transaction);
-      if (created) stats.leasesCreated++;
-      else stats.leasesUpdated++;
+    const payload = {
+      tenantId,
+      pmsConnectionId: connectionId,
+      pmsDebtorId,
+      pmsPropertyId: pmsPropertyId ?? null,
+      pmsUnitId: pmsUnitId ?? null,
+      externalId: l.externalId,
+      leaseNumber: l.leaseNumber ?? null,
+      status,
+      moveInDate: l.moveInDate ?? null,
+      moveOutDate: l.moveOutDate ?? null,
+      lastNoteSummary: l.lastNoteSummary ?? null,
+      inCollections: l.inCollections ?? false,
+      lastExternalUpdatedAt: l.lastExternalUpdatedAt ?? null,
+    };
+    const existing = existingByExternal.get(l.externalId);
+    if (existing) {
+      toUpdate.push({ id: existing.id, externalId: l.externalId, payload });
+    } else {
+      toCreate.push(payload);
     }
+  }
+
+  for (let i = 0; i < toCreate.length; i += BULK_CHUNK) {
+    const chunk = toCreate.slice(i, i + BULK_CHUNK);
+    const created = await PmsLease.bulkCreate(chunk, { transaction });
+    stats.leasesCreated += created.length;
+    for (const row of created) {
+      existingByExternal.set(row.externalId, row);
+      await upsertExternalMapping(connectionId, 'lease', row.externalId, 'pms_lease', row.id, transaction);
+    }
+  }
+
+  for (let i = 0; i < toUpdate.length; i += UPDATE_BATCH) {
+    const batch = toUpdate.slice(i, i + UPDATE_BATCH);
+    await Promise.all(
+      batch.map(({ id, externalId, payload }) =>
+        PmsLease.update(payload, { where: { id }, transaction }).then(() =>
+          upsertExternalMapping(connectionId, 'lease', externalId, 'pms_lease', id, transaction)
+        )
+      )
+    );
+    stats.leasesUpdated += batch.length;
   }
 
   if (stats.leasesSkipped > 0) {
@@ -277,9 +437,36 @@ async function syncPayments(connectionId, tenantId, data, syncRunId, transaction
 
 /**
  * Step 4: Compute balances per lease and aging snapshot for the connection.
+ * If data.leaseBalances is provided (e.g. from Rentvine leases/export), those are applied first;
+ * then balances are computed from charges/payments for any lease not in leaseBalances.
  */
-async function computeBalancesAndAging(connectionId, tenantId, syncRunId, transaction) {
+async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, transaction) {
   const asOfDate = new Date().toISOString().slice(0, 10);
+  const leaseBalancesFromConnector = data?.leaseBalances ?? [];
+  /** @type {Map<string, number>} lease id -> balanceCents from connector */
+  const connectorBalanceByLeaseId = new Map();
+
+  if (leaseBalancesFromConnector.length > 0) {
+    for (const lb of leaseBalancesFromConnector) {
+      const pmsLeaseId = await resolveInternalId(connectionId, 'lease', lb.leaseExternalId, transaction);
+      if (!pmsLeaseId) continue;
+      const balanceCents = Number(lb.balanceCents) || 0;
+      const lbDate = lb.asOfDate || asOfDate;
+      await ArBalance.upsert(
+        {
+          tenantId,
+          pmsConnectionId: connectionId,
+          pmsLeaseId,
+          balanceCents,
+          currency: 'USD',
+          asOfDate: lbDate,
+        },
+        { transaction, conflictFields: ['pms_lease_id', 'as_of_date'] }
+      );
+      connectorBalanceByLeaseId.set(pmsLeaseId, balanceCents);
+    }
+  }
+
   const leases = await PmsLease.findAll({ where: { pmsConnectionId: connectionId }, attributes: ['id'], transaction });
   let totalCents = 0;
   const buckets = { '0_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0 };
@@ -297,22 +484,28 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, transa
     });
     const chargeTotal = charges.reduce((s, c) => s + Number(c.amountCents), 0);
     const paymentTotal = payments.reduce((s, p) => s + Number(p.amountCents), 0);
-    const balanceCents = chargeTotal - paymentTotal;
-    if (balanceCents <= 0) continue;
+    const computedBalanceCents = chargeTotal - paymentTotal;
 
-    await ArBalance.upsert(
-      {
-        tenantId,
-        pmsConnectionId: connectionId,
-        pmsLeaseId: lease.id,
-        balanceCents,
-        currency: 'USD',
-        asOfDate,
-      },
-      { transaction, conflictFields: ['pms_lease_id', 'as_of_date'] }
-    );
+    const hasConnectorBalance = connectorBalanceByLeaseId.has(lease.id);
+    if (!hasConnectorBalance && computedBalanceCents > 0) {
+      await ArBalance.upsert(
+        {
+          tenantId,
+          pmsConnectionId: connectionId,
+          pmsLeaseId: lease.id,
+          balanceCents: computedBalanceCents,
+          currency: 'USD',
+          asOfDate,
+        },
+        { transaction, conflictFields: ['pms_lease_id', 'as_of_date'] }
+      );
+    }
 
-    totalCents += balanceCents;
+    const leaseBalanceCents = hasConnectorBalance
+      ? connectorBalanceByLeaseId.get(lease.id)
+      : computedBalanceCents;
+    if (leaseBalanceCents > 0) totalCents += leaseBalanceCents;
+
     const today = new Date(asOfDate);
     for (const c of charges) {
       const due = new Date(c.dueDate);
@@ -351,11 +544,14 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, transa
   return { totalCents, ...buckets };
 }
 
+const ALL_STEPS = ['debtors_leases', 'charges', 'payments', 'balances_aging'];
+
 /**
- * Run full sync for a connection: create SyncRun, run 4 steps, update connection and SyncRun.
- * Invoked by the worker with { connectionId, trigger?, idempotencyKey? }.
+ * Run full or partial sync for a connection: create SyncRun, run requested steps, update connection and SyncRun.
+ * Invoked by the worker with { connectionId, trigger?, idempotencyKey?, steps? }.
  * @param {string} connectionId
- * @param {{ trigger?: 'manual'|'scheduled'|'webhook', idempotencyKey?: string }} [options]
+ * @param {{ trigger?: 'manual'|'scheduled'|'webhook', idempotencyKey?: string, steps?: string[] }} [options]
+ *   steps: if set, only these steps run (e.g. ['debtors_leases']); otherwise all 4 steps.
  */
 export async function runSync(connectionId, options = {}) {
   const { connection, withCreds, software } = await ensureConnection(connectionId);
@@ -372,10 +568,12 @@ export async function runSync(connectionId, options = {}) {
   }
 
   const trigger = options.trigger ?? 'manual';
+  const stepsRequested = options.steps && options.steps.length > 0 ? options.steps : null;
+  const stepsToRun = stepsRequested ?? ALL_STEPS;
   const idempotencyKey = options.idempotencyKey ?? `${connectionId}-${trigger}-${Date.now()}`;
 
   logger.info(
-    { connectionId, tenantId, trigger, softwareKey: software?.key },
+    { connectionId, tenantId, trigger, steps: stepsToRun, softwareKey: software?.key },
     'PMS sync started'
   );
 
@@ -410,9 +608,12 @@ export async function runSync(connectionId, options = {}) {
     const data = await connector.syncFull();
     const dataNorm = {
       debtors: data?.debtors ?? [],
+      properties: data?.properties ?? [],
+      units: data?.units ?? [],
       leases: data?.leases ?? [],
       charges: data?.charges ?? [],
       payments: data?.payments ?? [],
+      leaseBalances: data?.leaseBalances ?? [],
       stats: data?.stats ?? {},
     };
 
@@ -421,6 +622,8 @@ export async function runSync(connectionId, options = {}) {
         connectionId,
         syncRunId: syncRun.id,
         debtorsCount: dataNorm.debtors.length,
+        propertiesCount: dataNorm.properties.length,
+        unitsCount: dataNorm.units.length,
         leasesCount: dataNorm.leases.length,
         chargesCount: dataNorm.charges.length,
         paymentsCount: dataNorm.payments.length,
@@ -430,36 +633,44 @@ export async function runSync(connectionId, options = {}) {
 
     const t2 = await sequelize.transaction();
     try {
-      logger.info({ connectionId, syncRunId: syncRun.id, step: '1/4' }, 'PMS sync: step debtors_leases');
-      const step1Stats = await syncDebtorsAndLeases(connectionId, tenantId, dataNorm, syncRun.id, t2);
-      logger.info(
-        { connectionId, syncRunId: syncRun.id, step: 'debtors_leases', ...step1Stats },
-        'PMS sync: step debtors_leases done'
-      );
+      if (stepsToRun.includes('debtors_leases')) {
+        logger.info({ connectionId, syncRunId: syncRun.id, step: '1/4' }, 'PMS sync: step debtors_leases');
+        const step1Stats = await syncDebtorsAndLeases(connectionId, tenantId, dataNorm, syncRun.id, t2);
+        logger.info(
+          { connectionId, syncRunId: syncRun.id, step: 'debtors_leases', ...step1Stats },
+          'PMS sync: step debtors_leases done'
+        );
+      }
 
-      logger.info({ connectionId, syncRunId: syncRun.id, step: '2/4' }, 'PMS sync: step charges');
-      const step2Stats = await syncCharges(connectionId, tenantId, dataNorm, syncRun.id, t2);
-      logger.info(
-        { connectionId, syncRunId: syncRun.id, step: 'charges', ...step2Stats },
-        'PMS sync: step charges done'
-      );
+      if (stepsToRun.includes('charges')) {
+        logger.info({ connectionId, syncRunId: syncRun.id, step: '2/4' }, 'PMS sync: step charges');
+        const step2Stats = await syncCharges(connectionId, tenantId, dataNorm, syncRun.id, t2);
+        logger.info(
+          { connectionId, syncRunId: syncRun.id, step: 'charges', ...step2Stats },
+          'PMS sync: step charges done'
+        );
+      }
 
-      logger.info({ connectionId, syncRunId: syncRun.id, step: '3/4' }, 'PMS sync: step payments');
-      const step3Stats = await syncPayments(connectionId, tenantId, dataNorm, syncRun.id, t2);
-      logger.info(
-        { connectionId, syncRunId: syncRun.id, step: 'payments', ...step3Stats },
-        'PMS sync: step payments done'
-      );
+      if (stepsToRun.includes('payments')) {
+        logger.info({ connectionId, syncRunId: syncRun.id, step: '3/4' }, 'PMS sync: step payments');
+        const step3Stats = await syncPayments(connectionId, tenantId, dataNorm, syncRun.id, t2);
+        logger.info(
+          { connectionId, syncRunId: syncRun.id, step: 'payments', ...step3Stats },
+          'PMS sync: step payments done'
+        );
+      }
 
-      logger.info({ connectionId, syncRunId: syncRun.id, step: '4/4' }, 'PMS sync: step balances_aging');
-      const step4Stats = await computeBalancesAndAging(connectionId, tenantId, syncRun.id, t2);
-      logger.info(
-        { connectionId, syncRunId: syncRun.id, step: 'balances_aging', ...step4Stats },
-        'PMS sync: step balances_aging done'
-      );
+      if (stepsToRun.includes('balances_aging')) {
+        logger.info({ connectionId, syncRunId: syncRun.id, step: '4/4' }, 'PMS sync: step balances_aging');
+        const step4Stats = await computeBalancesAndAging(connectionId, tenantId, syncRun.id, dataNorm, t2);
+        logger.info(
+          { connectionId, syncRunId: syncRun.id, step: 'balances_aging', ...step4Stats },
+          'PMS sync: step balances_aging done'
+        );
+      }
 
       await t2.commit();
-      logger.info({ connectionId, syncRunId: syncRun.id }, 'PMS sync: all steps committed');
+      logger.info({ connectionId, syncRunId: syncRun.id, steps: stepsToRun }, 'PMS sync: steps committed');
     } catch (err) {
       await t2.rollback();
       logger.error(
@@ -502,17 +713,23 @@ export async function runSync(connectionId, options = {}) {
       'PMS sync failed'
     );
     const now = new Date();
-    const prevState = connection.syncState ?? {};
+    const prevState = connection?.syncState ?? {};
     const syncState = { ...prevState, lastAttemptAt: now };
 
-    await PmsConnection.update(
-      { status: 'error', lastError: { message: err.message, step: syncRun?.step }, syncState },
-      { where: { id: connectionId } }
-    );
-    await SyncRun.update(
-      { status: 'failed', finishedAt: now, errorMessage: err.message, errorDetails: { message: err.message } },
-      { where: { id: syncRun.id } }
-    ).catch(() => {});
+    try {
+      await PmsConnection.update(
+        { status: 'error', lastError: { message: err.message, step: syncRun?.step }, syncState },
+        { where: { id: connectionId } }
+      );
+    } catch (updateErr) {
+      logger.warn({ connectionId, err: updateErr?.message }, 'Could not set connection status to error');
+    }
+    if (syncRun?.id) {
+      await SyncRun.update(
+        { status: 'failed', finishedAt: now, errorMessage: err.message, errorDetails: { message: err.message } },
+        { where: { id: syncRun.id } }
+      ).catch(() => {});
+    }
     throw err;
   }
 }

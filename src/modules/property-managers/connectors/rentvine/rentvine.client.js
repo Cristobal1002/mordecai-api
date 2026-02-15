@@ -82,5 +82,61 @@ export function createRentvineClient(credentials) {
       const response = await client.get('/portfolios/search', { params: { pageSize: 1 } });
       return response.data;
     },
+
+    /**
+     * GET /tenants/search?page=&pageSize=
+     * Returns array of { contact: { contactID, name, email, phone, address, ... } }.
+     * Rentvine max pageSize is 100.
+     */
+    async getTenantsSearch(page = 1, pageSize = 100) {
+      const data = await this.get('/tenants/search', { page, pageSize: Math.min(pageSize, 100) });
+      return Array.isArray(data) ? data : [];
+    },
+
+    /**
+     * Fetch all tenants by paginating tenants/search until no more results.
+     * Uses pageSize 100 (Rentvine max).
+     */
+    async getAllTenants(pageSize = 100) {
+      const all = [];
+      let page = 1;
+      let chunk;
+      do {
+        chunk = await this.getTenantsSearch(page, pageSize);
+        all.push(...chunk);
+        page += 1;
+      } while (chunk.length >= pageSize);
+      return all;
+    },
+
+    /**
+     * GET /leases/export?page=&pageSize= — one page of lease export items.
+     * Each item: { lease, balances, unpaidCharges, property, unit, portfolio }.
+     */
+    async getLeasesExportPage(page = 1, pageSize = 100) {
+      const data = await this.get('/leases/export', {
+        page,
+        pageSize: Math.min(pageSize, 100),
+      });
+      if (Array.isArray(data)) return data;
+      if (data && typeof data === 'object' && Array.isArray(data.data)) return data.data;
+      if (data && typeof data === 'object' && Array.isArray(data.items)) return data.items;
+      return [];
+    },
+
+    /**
+     * Fetch all leases by paginating leases/export (same pattern as getAllTenants).
+     */
+    async getAllLeasesExport(pageSize = 100) {
+      const all = [];
+      let page = 1;
+      let chunk;
+      do {
+        chunk = await this.getLeasesExportPage(page, pageSize);
+        all.push(...chunk);
+        page += 1;
+      } while (chunk.length >= pageSize);
+      return all;
+    },
   };
 }

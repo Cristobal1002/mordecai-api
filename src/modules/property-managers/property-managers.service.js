@@ -4,7 +4,8 @@
  * el worker en mordecai-workers procesa el job y ejecuta runSync (4 pasos).
  * Credentials are encrypted at rest (AES-256-GCM) and never returned to the client.
  */
-import { PmsConnection, Software } from '../../models/index.js';
+import { Op } from 'sequelize';
+import { PmsConnection, PmsDebtor, PmsLease, Software } from '../../models/index.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { getConnector, hasConnector } from './connectors/connector.factory.js';
 import { addPmsSyncJob } from '../../queues/pms-sync.queue.js';
@@ -206,8 +207,9 @@ export const propertyManagersService = {
 
   /**
    * Enqueue a sync job and set connection to syncing. Worker (mordecai-workers) processes the job.
+   * @param {{ steps?: string[] }} [opts] - If steps is set (e.g. ['debtors_leases']), only those steps run.
    */
-  triggerSync: async (tenantId, connectionId) => {
+  triggerSync: async (tenantId, connectionId, opts = {}) => {
     const connection = await propertyManagersService.getById(tenantId, connectionId);
     const software = await Software.findByPk(connection.softwareId);
     if (!software) throw new NotFoundError('Software');
@@ -222,7 +224,7 @@ export const propertyManagersService = {
       throw new BadRequestError(`Connector not available for software: ${software.key}`);
     }
 
-    const jobId = await addPmsSyncJob(connectionId, tenantId);
+    const jobId = await addPmsSyncJob(connectionId, tenantId, { trigger: 'manual', steps: opts.steps ?? null });
     if (jobId == null) {
       throw new BadRequestError(
         'Sync queue is not available. Set REDIS_URL to enable on-demand sync (worker must be running).'
@@ -237,5 +239,89 @@ export const propertyManagersService = {
       status: 'syncing',
       message: 'Sync requested. The worker will process the job.',
     };
+  },
+
+  /**
+   * List pms_debtors for the tenant (synced from PMS). Optional filter by connectionId, search (name/email), sort.
+   */
+  listPmsDebtors: async (tenantId, opts = {}) => {
+    await ensureTenant(tenantId);
+    const limit = Math.min(Number(opts.limit) || 500, 1000);
+    const offset = Number(opts.offset) || 0;
+    const connectionId = opts.connectionId || null;
+    const search = typeof opts.search === 'string' ? opts.search.trim() : null;
+    const sortBy = opts.sortBy && ['displayName', 'email', 'createdAt'].includes(opts.sortBy) ? opts.sortBy : 'displayName';
+    const sortOrder = opts.sortOrder === 'desc' ? 'DESC' : 'ASC';
+
+    const where = { tenantId };
+    if (connectionId) where.pmsConnectionId = connectionId;
+    if (search && search.length > 0) {
+      where[Op.or] = [
+        { displayName: { [Op.iLike]: `%${search}%` } },
+        { email: { [Op.iLike]: `%${search}%` } },
+      ];
+    }
+
+    const { rows, count } = await PmsDebtor.findAndCountAll({
+      where,
+      limit,
+      offset,
+      order: [[sortBy, sortOrder]],
+      include: [
+        {
+          association: 'pmsConnection',
+          attributes: ['id', 'status', 'lastSyncedAt'],
+          include: [
+            { association: 'software', attributes: ['key', 'name'] },
+          ],
+        },
+      ],
+    });
+
+    return { data: rows, total: count, limit, offset };
+  },
+
+  /**
+   * List pms_leases for the tenant. Optional filter by connectionId, search (leaseNumber/status), sort.
+   */
+  listPmsLeases: async (tenantId, opts = {}) => {
+    await ensureTenant(tenantId);
+    const limit = Math.min(Number(opts.limit) || 500, 1000);
+    const offset = Number(opts.offset) || 0;
+    const connectionId = opts.connectionId || null;
+    const search = typeof opts.search === 'string' ? opts.search.trim() : null;
+    const status = opts.status && ['active', 'ended', 'pending'].includes(opts.status) ? opts.status : null;
+    const sortBy = opts.sortBy && ['leaseNumber', 'status', 'moveInDate', 'createdAt'].includes(opts.sortBy) ? opts.sortBy : 'leaseNumber';
+    const sortOrder = opts.sortOrder === 'desc' ? 'DESC' : 'ASC';
+
+    const where = { tenantId };
+    if (connectionId) where.pmsConnectionId = connectionId;
+    if (status) where.status = status;
+    if (search && search.length > 0) {
+      where[Op.or] = [
+        { leaseNumber: { [Op.iLike]: `%${search}%` } },
+        { status: { [Op.iLike]: `%${search}%` } },
+      ];
+    }
+
+    const { rows, count } = await PmsLease.findAndCountAll({
+      where,
+      limit,
+      offset,
+      order: [[sortBy, sortOrder]],
+      include: [
+        {
+          association: 'pmsConnection',
+          attributes: ['id', 'status', 'lastSyncedAt'],
+          include: [{ association: 'software', attributes: ['key', 'name'] }],
+        },
+        {
+          association: 'pmsDebtor',
+          attributes: ['id', 'displayName', 'email'],
+        },
+      ],
+    });
+
+    return { data: rows, total: count, limit, offset };
   },
 };

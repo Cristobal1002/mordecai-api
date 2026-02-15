@@ -24,7 +24,16 @@ export class PmsLease extends Model {
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
       },
-      { sequelize, modelName: 'PmsLease', tableName: 'pms_leases', timestamps: true, underscored: true }
+      {
+        sequelize,
+        modelName: 'PmsLease',
+        tableName: 'pms_leases',
+        timestamps: true,
+        underscored: true,
+        indexes: [
+          { unique: true, fields: ['pms_connection_id', 'external_id'], name: 'uq_pms_leases_connection_external' },
+        ],
+      }
     );
     return PmsLease;
   }

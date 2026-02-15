@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger.js';
 import { propertyManagersService } from './property-managers.service.js';
 
 /** Remove credentials from connection payload so they are never sent to the client. */
@@ -124,8 +125,50 @@ export const propertyManagersController = {
   triggerSync: async (req, res, next) => {
     try {
       const { tenantId, connectionId } = req.params;
-      const data = await propertyManagersService.triggerSync(tenantId, connectionId);
+      const steps = req.body?.steps;
+      const stepsOpt = Array.isArray(steps) && steps.length > 0 ? steps : undefined;
+      logger.info({ tenantId, connectionId, steps: stepsOpt }, 'Trigger sync: request received');
+      const data = await propertyManagersService.triggerSync(tenantId, connectionId, {
+        steps: stepsOpt,
+      });
       res.ok(data, 'Sync requested');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  listPmsDebtors: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const { connectionId, limit, offset, search, sortBy, sortOrder } = req.query;
+      const result = await propertyManagersService.listPmsDebtors(tenantId, {
+        connectionId: connectionId || undefined,
+        limit,
+        offset,
+        search: search || undefined,
+        sortBy: sortBy || undefined,
+        sortOrder: sortOrder || undefined,
+      });
+      res.ok(result, 'PMS debtors retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  listPmsLeases: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const { connectionId, limit, offset, search, status, sortBy, sortOrder } = req.query;
+      const result = await propertyManagersService.listPmsLeases(tenantId, {
+        connectionId: connectionId || undefined,
+        limit,
+        offset,
+        search: search || undefined,
+        status: status || undefined,
+        sortBy: sortBy || undefined,
+        sortOrder: sortOrder || undefined,
+      });
+      res.ok(result, 'PMS leases retrieved successfully');
     } catch (error) {
       next(error);
     }

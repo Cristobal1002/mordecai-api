@@ -30,21 +30,26 @@ export function getPmsSyncQueue() {
   return queue;
 }
 
+/** Allowed step names for partial sync. */
+export const PMS_SYNC_STEPS = ['debtors_leases', 'charges', 'payments', 'balances_aging'];
+
 /**
  * Enqueue a sync job for the given connection. Returns job id or null if queue not available.
  * @param {string} connectionId
  * @param {string} tenantId
- * @param {{ trigger?: 'manual'|'scheduled'|'webhook' }} [options]
+ * @param {{ trigger?: 'manual'|'scheduled'|'webhook', steps?: string[] }} [options]
+ *   steps: if set, only these steps run (e.g. ['debtors_leases'] for leases only); otherwise full sync.
  */
 export async function addPmsSyncJob(connectionId, tenantId, options = {}) {
   const q = getPmsSyncQueue();
   if (!q) return null;
   const trigger = options.trigger ?? 'manual';
+  const steps = options.steps ?? null;
   const job = await q.add(
     'sync',
-    { connectionId, tenantId, trigger },
+    { connectionId, tenantId, trigger, steps },
     { attempts: 2, backoff: { type: 'exponential', delay: 5000 } }
   );
-  logger.info({ connectionId, tenantId, trigger, jobId: job.id }, 'PMS sync job enqueued');
+  logger.info({ connectionId, tenantId, trigger, steps, jobId: job.id }, 'PMS sync job enqueued');
   return job.id;
 }
