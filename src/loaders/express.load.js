@@ -12,6 +12,15 @@ import { errorHandlerMiddleware } from '../middlewares/index.js';
 import { swaggerOptions } from '../config/swagger.js';
 
 export const loadExpress = (app) => {
+  const normalizeOrigin = (origin) => origin.trim().replace(/\/+$/, '');
+  const corsOrigins =
+    config.cors.origin === '*'
+      ? true
+      : config.cors.origin
+          .split(',')
+          .map(normalizeOrigin)
+          .filter(Boolean);
+
   // App Runner/ELB sits in front of the app, so trust proxy headers
   // for correct IP detection and to avoid express-rate-limit warnings.
   app.set('trust proxy', 1);
@@ -21,15 +30,17 @@ export const loadExpress = (app) => {
   // CORS
   app.use(
     cors({
-      origin: config.cors.origin === '*' ? true : config.cors.origin.split(','),
+      origin: corsOrigins,
       credentials: config.cors.credentials,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: [
         'Content-Type',
         'Authorization',
+        'x-demo-token',
         'x-app-token',
         'x-csrf-token',
         'x-xsrf-token',
+        'x-eleven-tool-secret',
       ],
     })
   );
@@ -42,7 +53,16 @@ export const loadExpress = (app) => {
   });
 
   // Body parsers
-  app.use(express.json({ limit: '20mb' }));
+  app.use(
+    express.json({
+      limit: '20mb',
+      verify: (req, _res, buf) => {
+        if (buf?.length) {
+          req.rawBody = buf.toString('utf8');
+        }
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
   // Rate limiting - más estricto para prevenir abuso
@@ -70,8 +90,13 @@ export const loadExpress = (app) => {
       });
     },
     skip: (req) => {
-      // No aplicar rate limiting a health checks ni al WebSocket stream de Twilio
-      return req.url.includes('/health') || req.url.includes('/twilio/stream');
+      // No aplicar rate limiting a health checks, WebSocket stream de Twilio
+      // ni webhooks de post-llamada de ElevenLabs.
+      return (
+        req.url.includes('/health') ||
+        req.url.includes('/twilio/stream') ||
+        req.url.includes('/eleven/post-call')
+      );
     },
   });
 

@@ -18,12 +18,13 @@ const parseSseStream = async (stream, onEvent) => {
   const reader = stream.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  const debug = process.env.OPENAI_STREAM_DEBUG === 'true';
 
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
     let boundary = buffer.indexOf('\n\n');
 
     while (boundary !== -1) {
@@ -31,13 +32,34 @@ const parseSseStream = async (stream, onEvent) => {
       buffer = buffer.slice(boundary + 2);
       boundary = buffer.indexOf('\n\n');
 
-      if (!chunk.startsWith('data:')) continue;
-      const payload = chunk.replace(/^data:\s*/, '');
+      if (!chunk) continue;
+
+      const lines = chunk.split('\n');
+      let eventType = null;
+      const dataLines = [];
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          eventType = line.slice('event:'.length).trim();
+          continue;
+        }
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice('data:'.length).trimStart());
+        }
+      }
+
+      const payload = dataLines.join('\n');
       if (!payload) continue;
       if (payload === '[DONE]') return;
 
       try {
         const parsed = JSON.parse(payload);
+        if (!parsed.type && eventType) {
+          parsed.type = eventType;
+        }
+        if (debug && parsed?.type) {
+          logger.debug({ type: parsed.type }, 'OpenAI stream event');
+        }
         await onEvent(parsed);
       } catch (error) {
         logger.warn({ error, payload }, 'Failed to parse SSE payload');
@@ -49,6 +71,7 @@ const parseSseStream = async (stream, onEvent) => {
 export const transcribeAudio = async (wavBuffer, options) => {
   const model = options?.model || 'gpt-4o-transcribe';
   const language = options?.language;
+  const prompt = options?.prompt;
   const stream = options?.stream === true;
 
   const formData = new FormData();
@@ -56,6 +79,7 @@ export const transcribeAudio = async (wavBuffer, options) => {
   formData.append('response_format', 'json');
   if (stream) formData.append('stream', 'true');
   if (language) formData.append('language', language);
+  if (prompt) formData.append('prompt', prompt);
   formData.append('file', new Blob([wavBuffer], { type: 'audio/wav' }), 'audio.wav');
 
   const response = await fetch(`${OPENAI_BASE_URL}/v1/audio/transcriptions`, {
@@ -74,12 +98,20 @@ export const transcribeAudio = async (wavBuffer, options) => {
       throw new Error('Transcription stream is empty');
     }
     let transcript = '';
+    let sawDelta = false;
     await parseSseStream(response.body, async (event) => {
       if (event.type === 'transcript.text.delta') {
-        transcript += event.delta || '';
+        const delta = event.delta || '';
+        if (delta) {
+          sawDelta = true;
+          transcript += delta;
+        }
       }
       if (event.type === 'transcript.text.done') {
-        transcript += event.text || '';
+        const text = event.text || '';
+        if (text && !sawDelta) {
+          transcript += text;
+        }
       }
     });
     return transcript;
@@ -108,11 +140,29 @@ export const streamChatResponse = async (payload, onDelta) => {
     throw new Error('LLM response stream is empty');
   }
 
+  let hasOutput = false;
+  let sawDelta = false;
   await parseSseStream(response.body, async (event) => {
     if (event.type === 'response.output_text.delta') {
-      await onDelta(event.delta || '');
+      const delta = event.delta || '';
+      if (delta) {
+        hasOutput = true;
+        sawDelta = true;
+        await onDelta(delta);
+      }
+    }
+    if (event.type === 'response.output_text.done') {
+      const text = event.text || '';
+      if (text && !sawDelta) {
+        hasOutput = true;
+        await onDelta(text);
+      }
     }
   });
+
+  if (!hasOutput) {
+    logger.warn({ model: payload?.model }, 'LLM response contained no output text');
+  }
 };
 
 export const synthesizeSpeech = async (text, options) => {

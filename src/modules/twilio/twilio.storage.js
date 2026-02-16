@@ -34,6 +34,14 @@ const buildCallSummaryKey = (callSid, startedAt) => {
   return `twilio/calls/${safeCallSid}/summary-${timestamp}.json`;
 };
 
+const buildElevenPostCallKey = ({ conversationId, callSid, receivedAt }) => {
+  const safeId = conversationId || callSid || 'unknown-conversation';
+  const timestamp = receivedAt
+    ? new Date(receivedAt).toISOString().replace(/[:.]/g, '-')
+    : new Date().toISOString().replace(/[:.]/g, '-');
+  return `elevenlabs/calls/${safeId}/post-call-${timestamp}.json`;
+};
+
 export const saveTwilioCallSummary = async (payload) => {
   const bucket = getBucketName();
   const s3Client = getS3Client();
@@ -50,5 +58,32 @@ export const saveTwilioCallSummary = async (payload) => {
   );
 
   logger.info({ key, callSid: payload.callSid }, 'Twilio call summary saved to S3');
+  return key;
+};
+
+export const saveElevenPostCallPayload = async (payload) => {
+  const bucket = getBucketName();
+  const s3Client = getS3Client();
+  const key = buildElevenPostCallKey({
+    conversationId: payload?.conversationId,
+    callSid: payload?.callSid,
+    receivedAt: payload?.receivedAt,
+  });
+  const body = JSON.stringify(payload, null, 2);
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentType: 'application/json',
+    })
+  );
+
+  logger.info(
+    { key, conversationId: payload?.conversationId, callSid: payload?.callSid },
+    'ElevenLabs post-call payload saved to S3'
+  );
+
   return key;
 };
