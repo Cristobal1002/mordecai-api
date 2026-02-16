@@ -1,4 +1,12 @@
-import { DebtCase, Debtor, FlowPolicy, InteractionLog, Tenant } from '../../models/index.js';
+import { ForbiddenError } from '../../errors/index.js';
+import {
+  DebtCase,
+  Debtor,
+  FlowPolicy,
+  InteractionLog,
+  Tenant,
+} from '../../models/index.js';
+import { getAuthIdentity } from '../../utils/auth-identity.js';
 import { createVoiceContextSignature } from '../twilio/context-signature.js';
 
 const DEFAULT_RULES = {
@@ -6,6 +14,9 @@ const DEFAULT_RULES = {
   half_pct: 50,
   max_installments: 4,
 };
+
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 200;
 
 const buildChannels = () => ({
   sms: true,
@@ -203,6 +214,32 @@ const validateStartCallPayload = (payload = {}) => {
   };
 };
 
+const clampListLimit = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_LIST_LIMIT;
+  return Math.max(1, Math.min(MAX_LIST_LIMIT, Math.floor(numeric)));
+};
+
+const toStringArray = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+const toNumberOrNull = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 export const startDemoCall = async (payload) => {
   const validation = validateStartCallPayload(payload);
   if (!validation.ok) {
@@ -334,4 +371,81 @@ export const startDemoCall = async (payload) => {
       message: error?.message || 'Failed to create Twilio call',
     };
   }
+};
+
+export const listDemoCallsForUser = async ({ req, limit }) => {
+  const identity = getAuthIdentity(req);
+  if (!identity?.sub && !identity?.email) {
+    throw new ForbiddenError('Unauthorized');
+  }
+
+  const safeLimit = clampListLimit(limit);
+  const interactionRows = await InteractionLog.findAll({
+    where: {
+      type: 'CALL',
+    },
+    include: [
+      {
+        model: DebtCase,
+        as: 'debtCase',
+        attributes: ['id', 'amountDueCents', 'currency', 'meta'],
+        include: [
+          {
+            model: Debtor,
+            as: 'debtor',
+            attributes: ['id', 'fullName', 'phone', 'email'],
+          },
+        ],
+      },
+    ],
+    order: [['createdAt', 'DESC']],
+    // Pull an extra buffer, then filter to demo-originated interactions.
+    limit: Math.min(MAX_LIST_LIMIT * 3, safeLimit * 3),
+  });
+
+  const demoRows = interactionRows
+    .filter((interaction) => interaction.debtCase?.meta?.source === 'demo-ui')
+    .slice(0, safeLimit);
+
+  return demoRows.map((interaction) => {
+    const debtCase = interaction.debtCase;
+    const debtor = debtCase?.debtor;
+    const caseMeta = debtCase?.meta || {};
+    const aiData = interaction.aiData || {};
+    const elevenData = aiData.eleven || {};
+    const elevenMetadata = elevenData.metadata || {};
+    const providerRef = interaction.providerRef || null;
+
+    return {
+      interactionId: interaction.id,
+      tenantId: interaction.tenantId,
+      debtCaseId: interaction.debtCaseId,
+      debtorId: interaction.debtorId,
+      customerName: debtor?.fullName || caseMeta.customer_name || null,
+      phone: debtor?.phone || null,
+      amountDueCents: toNumberOrNull(debtCase?.amountDueCents),
+      currency: debtCase?.currency || 'USD',
+      status: interaction.status,
+      outcome: interaction.outcome,
+      summary:
+        interaction.summary ||
+        elevenData?.analysis?.transcript_summary ||
+        null,
+      useCase: caseMeta.use_case || null,
+      paymentOptions: toStringArray(caseMeta.options),
+      paymentChannels: toStringArray(caseMeta.channels),
+      callSid:
+        elevenData.call_sid || (providerRef && String(providerRef).startsWith('CA') ? providerRef : null),
+      conversationId:
+        elevenData.conversation_id ||
+        (providerRef && String(providerRef).startsWith('conv_') ? providerRef : null),
+      s3Key: elevenData.s3_key || null,
+      callDurationSecs: toNumberOrNull(elevenMetadata.call_duration_secs),
+      terminationReason: elevenMetadata.termination_reason || null,
+      startedAt: interaction.startedAt || null,
+      endedAt: interaction.endedAt || null,
+      createdAt: interaction.createdAt || null,
+      updatedAt: interaction.updatedAt || null,
+    };
+  });
 };

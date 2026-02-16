@@ -1,6 +1,19 @@
-import { startDemoCall } from './demo.service.js';
+import { listDemoCallsForUser, startDemoCall } from './demo.service.js';
 
 export const demoController = {
+  listCalls: async (req, res, next) => {
+    try {
+      const calls = await listDemoCallsForUser({
+        req,
+        limit: req.query?.limit,
+      });
+
+      return res.ok(calls, 'Demo calls fetched');
+    } catch (error) {
+      return next(error);
+    }
+  },
+
   startCall: async (req, res, next) => {
     try {
       const requiredToken = process.env.DEMO_API_TOKEN;
