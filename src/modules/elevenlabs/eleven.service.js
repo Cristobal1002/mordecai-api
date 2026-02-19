@@ -5,6 +5,7 @@ import {
   InteractionLog,
   PaymentAgreement,
 } from '../../models/index.js';
+import { resolvePolicyForCase } from '../collections/policy-resolver.service.js';
 import { logger } from '../../utils/logger.js';
 import { registerTwilioCallInElevenLabs } from './eleven.client.js';
 
@@ -124,12 +125,18 @@ const buildCaseMetadataDynamicVariables = (meta = {}) => {
   return acc;
 };
 
-const getFlowRules = (flowPolicy) => {
-  const rules = flowPolicy?.rules || {};
+/** Build validation-style rules from resolved policy (single source for v1 and v2). */
+const getRulesFromResolvedPolicy = (resolvedPolicy) => {
+  const r = resolvedPolicy?.rules || {};
+  const allowed = r.allowed_plans || ['FULL', 'HALF', 'INSTALLMENTS'];
+  const allowedPlanTypes = allowed.map((p) =>
+    String(p).toUpperCase() === 'INSTALLMENTS' ? 'INSTALLMENTS_4' : String(p).toUpperCase()
+  );
   return {
-    minUpfrontPct: Number(rules?.min_upfront_pct ?? 25),
-    halfPct: Number(rules?.half_pct ?? 50),
-    maxInstallments: Number(rules?.max_installments ?? 4),
+    minUpfrontPct: Number(r.min_upfront_pct ?? 25),
+    halfPct: Number(r.half_pct ?? 50),
+    maxInstallments: Number(r.max_installments ?? 4),
+    allowedPlanTypes: allowedPlanTypes.length ? allowedPlanTypes : ['FULL', 'HALF', 'INSTALLMENTS_4'],
   };
 };
 
@@ -142,11 +149,12 @@ const validateProposalAgainstRules = ({ proposal, balanceCents, rules }) => {
     return { ok: false, code: 'MISSING_PLAN_TYPE', message: 'plan_type is required.' };
   }
 
-  if (!['FULL', 'HALF', 'INSTALLMENTS_4'].includes(planType)) {
+  const allowed = rules.allowedPlanTypes ?? ['FULL', 'HALF', 'INSTALLMENTS_4'];
+  if (!allowed.includes(planType)) {
     return {
       ok: false,
       code: 'INVALID_PLAN_TYPE',
-      message: 'plan_type must be FULL, HALF or INSTALLMENTS_4.',
+      message: `plan_type must be one of: ${allowed.join(', ')}.`,
     };
   }
 
@@ -277,8 +285,10 @@ export const registerCallForInteraction = async ({
     throw new Error('Missing ELEVENLABS_AGENT_ID env var');
   }
 
-  const flowRules = getFlowRules(debtCase.flowPolicy);
+  const resolvedPolicy = await resolvePolicyForCase(interaction.tenantId, debtCase);
+  const flowRules = getRulesFromResolvedPolicy(resolvedPolicy);
 
+  const customInstructions = resolvedPolicy?.rules?.custom_instructions ?? '';
   const dynamicVariables = {
     tenant_id: String(interaction.tenantId),
     case_id: String(debtCase.id),
@@ -291,6 +301,7 @@ export const registerCallForInteraction = async ({
     call_sid: twilioCallSid || '',
     max_installments: String(flowRules.maxInstallments),
     min_upfront_pct: String(flowRules.minUpfrontPct),
+    custom_instructions: String(customInstructions || '').slice(0, 2000),
     ...buildCaseMetadataDynamicVariables(debtCase.meta || {}),
     ...extraDynamicVariables,
   };
@@ -416,10 +427,7 @@ export const createPaymentAgreementFromTool = async ({
 }) => {
   const debtCase = await DebtCase.findOne({
     where: { id: caseId, tenantId },
-    include: [
-      { model: Debtor, as: 'debtor' },
-      { model: FlowPolicy, as: 'flowPolicy' },
-    ],
+    include: [{ model: Debtor, as: 'debtor' }],
   });
 
   if (!debtCase) {
@@ -430,7 +438,8 @@ export const createPaymentAgreementFromTool = async ({
     };
   }
 
-  const rules = getFlowRules(debtCase.flowPolicy);
+  const resolvedPolicy = await resolvePolicyForCase(tenantId, debtCase);
+  const rules = getRulesFromResolvedPolicy(resolvedPolicy);
   const validation = validateProposalAgainstRules({
     proposal,
     balanceCents: Number(debtCase.amountDueCents),

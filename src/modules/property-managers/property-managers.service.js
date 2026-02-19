@@ -14,11 +14,15 @@ import {
   ArPayment,
   ArBalance,
   ArAgingSnapshot,
+  Debtor,
+  DebtCase,
 } from '../../models/index.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { getConnector, hasConnector } from './connectors/connector.factory.js';
-import { addPmsSyncJob } from '../../queues/pms-sync.queue.js';
+import { addPmsSyncJob, addBuildCasesJob } from '../../queues/pms-sync.queue.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../../errors/index.js';
+import { automationService } from '../automations/automation.service.js';
+import { logger } from '../../utils/logger.js';
 import {
   encryptCredentials,
   decryptCredentials,
@@ -256,6 +260,208 @@ export const propertyManagersService = {
       connectionId: connection.id,
       status: 'syncing',
       message: 'Sync requested. The worker will process the job.',
+    };
+  },
+
+  /**
+   * Enqueue build-cases job. Returns { enqueued: true, jobId } or throws if queue unavailable.
+   * The worker runs the actual buildDebtCasesFromPms logic.
+   */
+  enqueueBuildCasesFromPms: async (tenantId, connectionId) => {
+    await ensureTenant(tenantId);
+    await propertyManagersService.getById(tenantId, connectionId);
+    const jobId = await addBuildCasesJob(connectionId, tenantId);
+    if (jobId == null) {
+      throw new BadRequestError(
+        'Build cases queue is not available. Set REDIS_URL and ensure the worker is running.'
+      );
+    }
+    return { enqueued: true, jobId };
+  },
+
+  /**
+   * Build debt_cases (and debtors) from PMS data so automations can enroll them.
+   * Uses ArBalance (balance > 0) + PmsLease + PmsDebtor. Creates/updates core Debtor and DebtCase per lease with balance.
+   * Called by the worker when processing a build-cases job.
+   */
+  buildDebtCasesFromPms: async (tenantId, connectionId) => {
+    await ensureTenant(tenantId);
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+
+    const balances = await ArBalance.findAll({
+      where: {
+        tenantId,
+        pmsConnectionId: connectionId,
+        balanceCents: { [Op.gt]: 0 },
+      },
+      order: [['asOfDate', 'DESC']],
+      raw: true,
+    });
+    const latestByLease = new Map();
+    for (const b of balances) {
+      if (!latestByLease.has(b.pms_lease_id)) {
+        latestByLease.set(b.pms_lease_id, b);
+      }
+    }
+    const leaseIds = [...latestByLease.keys()];
+    if (leaseIds.length === 0) {
+      return {
+        created: 0,
+        updated: 0,
+        total: 0,
+        message: 'No leases with balance > 0. Run "Sync full flow" first to load debtors, leases, charges and balances from your PMS.',
+      };
+    }
+
+    // Compute days past due per lease from oldest unpaid charge due date
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const todayTime = today.getTime();
+    const chargesByLease = await ArCharge.findAll({
+      where: { pmsLeaseId: { [Op.in]: leaseIds }, pmsConnectionId: connectionId },
+      attributes: ['pmsLeaseId', 'dueDate', 'openAmountCents', 'amountCents'],
+      raw: true,
+    });
+    const daysPastDueByLease = new Map();
+    for (const c of chargesByLease) {
+      const openCents = Number(c.open_amount_cents ?? c.openAmountCents ?? c.amount_cents ?? c.amountCents ?? 0);
+      if (openCents <= 0) continue;
+      const due = c.due_date ?? c.dueDate;
+      if (!due) continue;
+      const leaseId = c.pms_lease_id ?? c.pmsLeaseId;
+      const dueTime = new Date(due).getTime();
+      const dpd = Math.max(0, Math.floor((todayTime - dueTime) / (24 * 60 * 60 * 1000)));
+      const existing = daysPastDueByLease.get(leaseId);
+      if (existing == null || dpd > existing.daysPastDue) {
+        daysPastDueByLease.set(leaseId, { daysPastDue: dpd, dueDate: due });
+      }
+    }
+    logger.info(
+      { connectionId, chargesCount: chargesByLease.length, leasesWithDpd: daysPastDueByLease.size },
+      'Build cases: DPD from charges'
+    );
+
+    const leases = await PmsLease.findAll({
+      where: { id: { [Op.in]: leaseIds } },
+      include: [{ model: PmsDebtor, as: 'pmsDebtor', required: true }],
+    });
+    const debtorCache = new Map();
+    const existingCases = await DebtCase.findAll({
+      where: { tenantId },
+      attributes: ['id', 'debtorId', 'amountDueCents', 'meta'],
+    });
+    const casesByPmsLeaseId = new Map();
+    for (const dc of existingCases) {
+      const meta = dc.meta || {};
+      if (meta.source === 'pms' && meta.pms_connection_id === connectionId && meta.pms_lease_id) {
+        casesByPmsLeaseId.set(meta.pms_lease_id, dc);
+      }
+    }
+
+    let created = 0;
+    let updated = 0;
+    for (const lease of leases) {
+      const pmsDebtor = lease.pmsDebtor;
+      if (!pmsDebtor) continue;
+      const bal = latestByLease.get(lease.id);
+      if (!bal || Number(bal.balance_cents) <= 0) continue;
+
+      let debtor = debtorCache.get(pmsDebtor.id);
+      if (!debtor) {
+        const externalRef = `pms:${connectionId}:${pmsDebtor.externalId}`;
+        const [d] = await Debtor.findOrCreate({
+          where: { tenantId, externalRef },
+          defaults: {
+            tenantId,
+            externalRef,
+            fullName: pmsDebtor.displayName || 'Unknown',
+            email: pmsDebtor.email ?? null,
+            phone: pmsDebtor.phone ?? null,
+            metadata: { pms_debtor_id: pmsDebtor.id },
+          },
+        });
+        if (d) {
+          await d.update({
+            fullName: pmsDebtor.displayName || d.fullName,
+            email: pmsDebtor.email ?? d.email,
+            phone: pmsDebtor.phone ?? d.phone,
+          }).catch(() => {});
+        }
+        debtor = d;
+        debtorCache.set(pmsDebtor.id, debtor);
+      }
+
+      const rawCents = bal.balance_cents ?? bal.balanceCents ?? 0;
+      const amountDueCents = Math.round(Number(rawCents)) || 0;
+      if (amountDueCents <= 0 || !Number.isFinite(amountDueCents)) continue;
+
+      const aging = daysPastDueByLease.get(lease.id);
+      const daysPastDue = aging ? aging.daysPastDue : 0;
+      const dueDate = aging ? aging.dueDate : null;
+
+      const meta = {
+        source: 'pms',
+        pms_connection_id: connectionId,
+        pms_lease_id: lease.id,
+        pms_debtor_id: pmsDebtor.id,
+      };
+      const existing = casesByPmsLeaseId.get(lease.id);
+      if (existing) {
+        await DebtCase.update(
+          {
+            amountDueCents,
+            currency: bal.currency || 'USD',
+            daysPastDue,
+            dueDate: dueDate || undefined,
+            meta: { ...(existing.meta || {}), ...meta },
+            nextActionAt: existing.nextActionAt || new Date(),
+          },
+          { where: { id: existing.id } }
+        );
+        updated++;
+      } else {
+        await DebtCase.create({
+          tenantId,
+          debtorId: debtor.id,
+          amountDueCents,
+          currency: bal.currency || 'USD',
+          daysPastDue,
+          dueDate: dueDate || undefined,
+          status: 'NEW',
+          nextActionAt: new Date(),
+          meta,
+        });
+        created++;
+      }
+    }
+
+    // Auto-enroll new/updated debt cases and recompute stages (early/mid/late) from DPD
+    try {
+      const automations = await automationService.list(tenantId, connectionId);
+      for (const a of automations) {
+        if (a.status !== 'active') continue;
+        try {
+          const result = await automationService.enroll(tenantId, a.id, {});
+          if (result.enrolled > 0) {
+            logger.info({ automationId: a.id, enrolled: result.enrolled }, 'Auto-enrolled cases after build-cases');
+          }
+          const stageResult = await automationService.recomputeStagesForAutomation(tenantId, a.id);
+          if (stageResult.updated > 0) {
+            logger.info({ automationId: a.id, updated: stageResult.updated }, 'Recomputed stages after build-cases');
+          }
+        } catch (err) {
+          logger.warn({ err, automationId: a.id }, 'Auto-enroll/recompute after build-cases failed');
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, connectionId, tenantId }, 'List automations for auto-enroll failed');
+    }
+
+    return {
+      created,
+      updated,
+      total: created + updated,
+      message: `Built ${created + updated} cases from PMS (${created} new, ${updated} updated).`,
     };
   },
 

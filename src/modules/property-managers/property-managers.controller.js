@@ -220,4 +220,14 @@ export const propertyManagersController = {
       next(error);
     }
   },
+
+  buildDebtCasesFromPms: async (req, res, next) => {
+    try {
+      const { tenantId, connectionId } = req.params;
+      const result = await propertyManagersService.enqueueBuildCasesFromPms(tenantId, connectionId);
+      res.ok(result, 'Build cases job enqueued. The worker will process it shortly.');
+    } catch (error) {
+      next(error);
+    }
+  },
 };

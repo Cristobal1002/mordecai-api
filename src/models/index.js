@@ -27,6 +27,11 @@ import { ArAdjustment } from './ar-adjustment.model.js';
 import { ArBalance } from './ar-balance.model.js';
 import { ArAgingSnapshot } from './ar-aging-snapshot.model.js';
 import { SyncRun } from './sync-run.model.js';
+import { CollectionStrategy } from './collection-strategy.model.js';
+import { CollectionStage } from './collection-stage.model.js';
+import { CollectionAutomation } from './collection-automation.model.js';
+import { CaseAutomationState } from './case-automation-state.model.js';
+import { CollectionEvent } from './collection-event.model.js';
 
 export const initModels = (sequelize) => {
   // Inicializar modelos
@@ -55,6 +60,11 @@ export const initModels = (sequelize) => {
   ArBalance.initModel(sequelize);
   ArAgingSnapshot.initModel(sequelize);
   SyncRun.initModel(sequelize);
+  CollectionStrategy.initModel(sequelize);
+  CollectionStage.initModel(sequelize);
+  CollectionAutomation.initModel(sequelize);
+  CaseAutomationState.initModel(sequelize);
+  CollectionEvent.initModel(sequelize);
 
   // Definir relaciones
 
@@ -77,6 +87,8 @@ export const initModels = (sequelize) => {
   Tenant.hasMany(ArAdjustment, { foreignKey: 'tenant_id', as: 'arAdjustments' });
   Tenant.hasMany(ArBalance, { foreignKey: 'tenant_id', as: 'arBalances' });
   Tenant.hasMany(ArAgingSnapshot, { foreignKey: 'tenant_id', as: 'arAgingSnapshots' });
+  Tenant.hasMany(CollectionStrategy, { foreignKey: 'tenant_id', as: 'collectionStrategies' });
+  Tenant.hasMany(CollectionAutomation, { foreignKey: 'tenant_id', as: 'collectionAutomations' });
 
   // Software hasMany...
   Software.hasMany(SoftwareSetupStep, { foreignKey: 'software_id', as: 'setupSteps' });
@@ -92,6 +104,17 @@ export const initModels = (sequelize) => {
 
   // FlowPolicy hasMany...
   FlowPolicy.hasMany(DebtCase, { foreignKey: 'flow_policy_id', as: 'debtCases' });
+
+  // CollectionStrategy hasMany...
+  CollectionStrategy.hasMany(CollectionStage, { foreignKey: 'strategy_id', as: 'stages' });
+  CollectionStrategy.hasMany(CollectionAutomation, { foreignKey: 'strategy_id', as: 'automations' });
+
+  // CollectionAutomation hasMany...
+  CollectionAutomation.hasMany(CaseAutomationState, { foreignKey: 'automation_id', as: 'caseStates' });
+  CollectionAutomation.hasMany(CollectionEvent, { foreignKey: 'automation_id', as: 'events' });
+
+  // DebtCase hasMany (v2)
+  DebtCase.hasMany(CaseAutomationState, { foreignKey: 'debt_case_id', as: 'automationStates' });
 
   // ImportBatch hasMany...
   ImportBatch.hasMany(DebtCase, { foreignKey: 'import_batch_id', as: 'debtCases' });
@@ -135,6 +158,7 @@ export const initModels = (sequelize) => {
   PmsConnection.hasMany(ArBalance, { foreignKey: 'pms_connection_id', as: 'arBalances' });
   PmsConnection.hasMany(ArAgingSnapshot, { foreignKey: 'pms_connection_id', as: 'arAgingSnapshots' });
   PmsConnection.hasMany(SyncRun, { foreignKey: 'pms_connection_id', as: 'syncRuns' });
+  PmsConnection.hasMany(CollectionAutomation, { foreignKey: 'pms_connection_id', as: 'collectionAutomations' });
 
   PmsProperty.hasMany(PmsUnit, { foreignKey: 'pms_property_id', as: 'pmsUnits' });
   PmsProperty.hasMany(PmsLease, { foreignKey: 'pms_property_id', as: 'pmsLeases' });
@@ -175,6 +199,19 @@ export const initModels = (sequelize) => {
   ArAgingSnapshot.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   ArAgingSnapshot.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
   SyncRun.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+
+  // Collections Engine v2 belongsTo
+  CollectionStrategy.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  CollectionStage.belongsTo(CollectionStrategy, { foreignKey: 'strategy_id', as: 'strategy' });
+  CollectionAutomation.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  CollectionAutomation.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
+  CollectionAutomation.belongsTo(CollectionStrategy, { foreignKey: 'strategy_id', as: 'strategy' });
+  CaseAutomationState.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
+  CaseAutomationState.belongsTo(CollectionAutomation, { foreignKey: 'automation_id', as: 'automation' });
+  CaseAutomationState.belongsTo(CollectionStrategy, { foreignKey: 'strategy_id', as: 'strategy' });
+  CaseAutomationState.belongsTo(CollectionStage, { foreignKey: 'current_stage_id', as: 'currentStage' });
+  CollectionEvent.belongsTo(CollectionAutomation, { foreignKey: 'automation_id', as: 'automation' });
+  CollectionEvent.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
 };
 
 export {
@@ -203,5 +240,10 @@ export {
   ArBalance,
   ArAgingSnapshot,
   SyncRun,
+  CollectionStrategy,
+  CollectionStage,
+  CollectionAutomation,
+  CaseAutomationState,
+  CollectionEvent,
 };
 

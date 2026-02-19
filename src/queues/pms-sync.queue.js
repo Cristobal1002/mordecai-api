@@ -53,3 +53,18 @@ export async function addPmsSyncJob(connectionId, tenantId, options = {}) {
   logger.info({ connectionId, tenantId, trigger, steps, jobId: job.id }, 'PMS sync job enqueued');
   return job.id;
 }
+
+/**
+ * Enqueue a build-cases job (debt cases from PMS balances). Returns job id or null if queue not available.
+ */
+export async function addBuildCasesJob(connectionId, tenantId) {
+  const q = getPmsSyncQueue();
+  if (!q) return null;
+  const job = await q.add(
+    'build-cases',
+    { connectionId, tenantId },
+    { attempts: 2, backoff: { type: 'exponential', delay: 5000 } }
+  );
+  logger.info({ connectionId, tenantId, jobId: job.id }, 'Build cases job enqueued');
+  return job.id;
+}

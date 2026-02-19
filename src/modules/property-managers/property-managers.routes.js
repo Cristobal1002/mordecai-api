@@ -155,4 +155,13 @@ router.post(
   propertyManagersController.triggerSync
 );
 
+// POST /api/v1/tenants/:tenantId/pms-connections/:connectionId/build-cases
+router.post(
+  '/:tenantId/pms-connections/:connectionId/build-cases',
+  requireAuth(),
+  getPropertyManagerValidator,
+  validateRequest,
+  propertyManagersController.buildDebtCasesFromPms
+);
+
 export default router;
