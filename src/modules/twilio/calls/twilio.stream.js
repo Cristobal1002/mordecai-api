@@ -1,6 +1,6 @@
-import { logger } from '../../utils/logger.js';
-import { attachTwilioPipelineEngine } from './engines/pipeline.engine.js';
-import { attachTwilioRealtimeEngine } from './engines/realtime.engine.js';
+import { logger } from '../../../utils/logger.js';
+import { attachTwilioPipelineEngine } from '../engines/pipeline.engine.js';
+import { attachTwilioRealtimeEngine } from '../engines/realtime.engine.js';
 
 const resolveEngine = () => (process.env.TWILIO_ENGINE || 'realtime').toLowerCase();
 

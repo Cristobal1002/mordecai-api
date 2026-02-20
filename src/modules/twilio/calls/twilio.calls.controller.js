@@ -1,10 +1,10 @@
-import { config } from '../../config/index.js';
-import { logger } from '../../utils/logger.js';
+import { config } from '../../../config/index.js';
+import { logger } from '../../../utils/logger.js';
 import { verifyVoiceContextSignature } from './context-signature.js';
 import {
   registerCallForInteraction,
   resolveInteractionContext,
-} from '../elevenlabs/eleven.service.js';
+} from '../../elevenlabs/eleven.service.js';
 
 const escapeXml = (value) =>
   String(value || '')
@@ -100,7 +100,7 @@ const handleElevenRegisterVoice = async (req, res) => {
   return res.status(200).send(twiml);
 };
 
-export const twilioController = {
+export const twilioCallsController = {
   voice: async (req, res, next) => {
     try {
       const engine = (process.env.TWILIO_ENGINE || 'realtime').toLowerCase();

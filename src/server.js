@@ -4,7 +4,7 @@ import { config } from './config/index.js';
 import { logger } from './utils/logger.js';
 import { loadExpress } from './loaders/express.load.js';
 import { loadDatabase } from './loaders/sequelize.load.js';
-import { attachTwilioStreamServer } from './modules/twilio/twilio.stream.js';
+import { attachTwilioStreamServer } from './modules/twilio/calls/twilio.stream.js';
 
 let server;
 
