@@ -13,6 +13,7 @@ import {
   listPmsLeasesValidator,
   getPmsStatsValidator,
   listPmsChargesValidator,
+  listPmsPaymentsValidator,
   getPmsBalancesSummaryValidator,
 } from './property-managers.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
@@ -54,6 +55,15 @@ router.get(
   listPmsChargesValidator,
   validateRequest,
   propertyManagersController.listPmsCharges
+);
+
+// GET /api/v1/tenants/:tenantId/pms-payments
+router.get(
+  '/:tenantId/pms-payments',
+  requireAuth(),
+  listPmsPaymentsValidator,
+  validateRequest,
+  propertyManagersController.listPmsPayments
 );
 
 // GET /api/v1/tenants/:tenantId/pms-balances-summary

@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { caseController } from './case.controller.js';
+import { requireAuth } from '../../middlewares/index.js';
 import {
   getCaseValidator,
   getTimelineValidator,
   pauseCaseValidator,
   resumeCaseValidator,
+  triggerCallValidator,
 } from './case.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 
@@ -35,6 +37,15 @@ router.post(
   resumeCaseValidator,
   validateRequest,
   caseController.resume
+);
+
+// POST /api/v1/tenants/:tenantId/cases/:caseId/trigger-call
+router.post(
+  '/:tenantId/cases/:caseId/trigger-call',
+  requireAuth(),
+  triggerCallValidator,
+  validateRequest,
+  caseController.triggerCall
 );
 
 export default router;

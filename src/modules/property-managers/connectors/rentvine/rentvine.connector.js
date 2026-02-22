@@ -48,13 +48,19 @@ class RentvineConnector extends BaseConnector {
     const properties = [...propertiesByKey.values()];
     const units = [...unitsByKey.values()];
 
+    const unitToLeaseMap = rentvineMapper.buildUnitToLeaseMap(rawLeases);
+    const rawPayments = await client.getAllTransactions(2);
+    const payments = rawPayments
+      .map((item) => rentvineMapper.mapTransactionToCanonicalPayment(item, unitToLeaseMap))
+      .filter((p) => p != null && p.externalId);
+
     return {
       debtors,
       leases,
       properties,
       units,
       charges,
-      payments: [],
+      payments,
       leaseBalances: leaseBalances.length ? leaseBalances : undefined,
       stats: {
         totalDebtors: debtors.length,
@@ -62,6 +68,7 @@ class RentvineConnector extends BaseConnector {
         totalProperties: properties.length,
         totalUnits: units.length,
         totalCharges: charges.length,
+        totalPayments: payments.length,
         totalLeaseBalances: leaseBalances.length,
       },
     };

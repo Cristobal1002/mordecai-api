@@ -8,6 +8,7 @@ import strategyRoutes from '../modules/strategies/strategy.routes.js';
 import automationRoutes from '../modules/automations/automation.routes.js';
 import caseRoutes from '../modules/cases/case.routes.js';
 import propertyManagersRoutes from '../modules/property-managers/property-managers.routes.js';
+import dashboardRoutes from '../modules/dashboard/dashboard.routes.js';
 import importRoutes from '../modules/imports/import.routes.js';
 import debtorRoutes from '../modules/debtors/debtor.routes.js';
 import debtCaseRoutes from '../modules/debt-cases/debt-case.routes.js';
@@ -37,6 +38,7 @@ const routes = (app) => {
   router.use('/tenants', automationRoutes);
   router.use('/tenants', caseRoutes);
   router.use('/tenants', propertyManagersRoutes);
+  router.use('/tenants', dashboardRoutes);
   router.use('/import-batches', importRoutes);
   router.use('/debtors', debtorRoutes);
   router.use('/debt-cases', debtCaseRoutes);

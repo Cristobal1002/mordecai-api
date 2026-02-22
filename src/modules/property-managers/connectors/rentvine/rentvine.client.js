@@ -138,5 +138,51 @@ export function createRentvineClient(credentials) {
       } while (chunk.length >= pageSize);
       return all;
     },
+
+    /**
+     * GET /accounting/transactions/search
+     * transactionTypeID: 1 = charges, 2 = payments
+     * Returns array of { transaction, ledger, property, portfolio, unit, transactionEntries }.
+     */
+    async getTransactionsSearchPage(params = {}) {
+      const {
+        transactionTypeID = 2,
+        isVoided = false,
+        page = 1,
+        pageSize = 100,
+        ...rest
+      } = params;
+      const data = await this.get('/accounting/transactions/search', {
+        transactionTypeID,
+        isVoided: String(isVoided),
+        page,
+        pageSize: Math.min(pageSize, 100),
+        ...rest,
+      });
+      if (Array.isArray(data)) return data;
+      if (data?.data && Array.isArray(data.data)) return data.data;
+      if (data?.items && Array.isArray(data.items)) return data.items;
+      return [];
+    },
+
+    /**
+     * Fetch all transactions (payments or charges) by paginating.
+     */
+    async getAllTransactions(transactionTypeID = 2, pageSize = 100) {
+      const all = [];
+      let page = 1;
+      let chunk;
+      do {
+        chunk = await this.getTransactionsSearchPage({
+          transactionTypeID,
+          isVoided: false,
+          page,
+          pageSize,
+        });
+        all.push(...chunk);
+        page += 1;
+      } while (chunk.length >= pageSize);
+      return all;
+    },
   };
 }

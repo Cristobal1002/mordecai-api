@@ -622,6 +622,48 @@ export const propertyManagersService = {
   },
 
   /**
+   * List ar_payments for the tenant (paginated). Optional filter by connectionId, sort.
+   */
+  listPmsPayments: async (tenantId, opts = {}) => {
+    await ensureTenant(tenantId);
+    const limit = Math.min(Number(opts.limit) || 50, 500);
+    const offset = Number(opts.offset) || 0;
+    const connectionId = opts.connectionId || null;
+    const sortBy = opts.sortBy && ['paidAt', 'amountCents', 'createdAt'].includes(opts.sortBy) ? opts.sortBy : 'paidAt';
+    const sortOrder = opts.sortOrder === 'asc' ? 'ASC' : 'DESC';
+
+    const where = { tenantId };
+    if (connectionId) where.pmsConnectionId = connectionId;
+
+    const { rows, count } = await ArPayment.findAndCountAll({
+      where,
+      limit,
+      offset,
+      order: [[sortBy, sortOrder]],
+      include: [
+        {
+          association: 'pmsLease',
+          attributes: ['id', 'leaseNumber', 'status', 'externalId'],
+          required: false,
+          include: [
+            { association: 'pmsDebtor', attributes: ['id', 'displayName', 'email'], required: false },
+          ],
+        },
+        {
+          association: 'pmsConnection',
+          attributes: ['id'],
+          required: false,
+          include: [
+            { association: 'software', attributes: ['name'], required: false },
+          ],
+        },
+      ],
+    });
+
+    return { data: rows, total: count, limit, offset };
+  },
+
+  /**
    * Balances and aging summary for the tenant (lease-level balances + aging snapshot).
    */
   getPmsBalancesSummary: async (tenantId) => {

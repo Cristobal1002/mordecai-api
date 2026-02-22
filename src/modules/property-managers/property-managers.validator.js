@@ -105,4 +105,14 @@ export const listPmsChargesValidator = [
   query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
 ];
 
+const PAYMENT_SORT_FIELDS = ['paidAt', 'amountCents', 'createdAt'];
+export const listPmsPaymentsValidator = [
+  tenantIdParam,
+  query('connectionId').optional().isUUID().withMessage('connectionId must be a valid UUID'),
+  query('limit').optional().isInt({ min: 1, max: 500 }).withMessage('limit must be between 1 and 500'),
+  query('offset').optional().isInt({ min: 0 }).withMessage('offset must be a non-negative integer'),
+  query('sortBy').optional().isIn(PAYMENT_SORT_FIELDS).withMessage(`sortBy must be one of: ${PAYMENT_SORT_FIELDS.join(', ')}`),
+  query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
+];
+
 export const getPmsBalancesSummaryValidator = [tenantIdParam];

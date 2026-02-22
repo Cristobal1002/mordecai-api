@@ -22,3 +22,5 @@ export const resumeCaseValidator = [
   caseIdParam,
   body('automationId').optional().isUUID().withMessage('automationId must be a valid UUID'),
 ];
+
+export const triggerCallValidator = [tenantIdParam, caseIdParam];

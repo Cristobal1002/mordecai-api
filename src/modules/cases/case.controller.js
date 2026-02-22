@@ -43,4 +43,14 @@ export const caseController = {
       next(error);
     }
   },
+
+  triggerCall: async (req, res, next) => {
+    try {
+      const { tenantId, caseId } = req.params;
+      const result = await caseService.triggerCall(tenantId, caseId);
+      res.ok(result, result.message || 'Call enqueued');
+    } catch (error) {
+      next(error);
+    }
+  },
 };

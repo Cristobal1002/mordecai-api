@@ -211,6 +211,23 @@ export const propertyManagersController = {
     }
   },
 
+  listPmsPayments: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const { connectionId, limit, offset, sortBy, sortOrder } = req.query;
+      const result = await propertyManagersService.listPmsPayments(tenantId, {
+        connectionId: connectionId || undefined,
+        limit,
+        offset,
+        sortBy: sortBy || undefined,
+        sortOrder: sortOrder || undefined,
+      });
+      res.ok(result, 'PMS payments retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
   getPmsBalancesSummary: async (req, res, next) => {
     try {
       const { tenantId } = req.params;

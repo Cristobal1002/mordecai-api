@@ -196,4 +196,58 @@ export const rentvineMapper = {
     }
     return out;
   },
+
+  /**
+   * Map accounting/transactions/search item (payment, transactionTypeID=2) to canonical payment.
+   * Uses unit.unitID → leaseExternalId via unitToLeaseMap (built from leases/export).
+   */
+  mapTransactionToCanonicalPayment(item, unitToLeaseMap) {
+    const t = item?.transaction;
+    const unit = item?.unit;
+    if (!t?.transactionID) return null;
+    const amount = parseFloat(t.amount, 10);
+    if (Number.isNaN(amount) || amount <= 0) return null;
+    const amountCents = Math.round(amount * 100);
+    const datePosted = t.datePosted ?? t.date ?? null;
+    const paidAt = datePosted ? new Date(datePosted) : new Date();
+    const unitId = unit?.unitID != null ? String(unit.unitID) : null;
+    const leaseExternalId = unitId && unitToLeaseMap ? unitToLeaseMap.get(unitId) : null;
+    return {
+      externalId: String(t.transactionID),
+      leaseExternalId: leaseExternalId ?? undefined,
+      amountCents,
+      currency: 'USD',
+      paidAt,
+      paymentMethod: t.paymentMethod ?? (t.description?.includes('Portal') ? 'portal' : null),
+      lastExternalUpdatedAt: t.dateTimeModified ? new Date(t.dateTimeModified) : null,
+    };
+  },
+
+  /**
+   * Build unitID → leaseID map from leases/export items.
+   * Prefers active leases (no closedDate, moveOutDate in future).
+   */
+  buildUnitToLeaseMap(leaseExportItems) {
+    const map = new Map();
+    const today = new Date().toISOString().slice(0, 10);
+    for (const item of leaseExportItems || []) {
+      const lease = item?.lease;
+      const unit = item?.unit;
+      if (!lease?.leaseID || !unit?.unitID) continue;
+      const unitId = String(unit.unitID);
+      const leaseId = String(lease.leaseID);
+      const closedDate = lease.closedDate ? String(lease.closedDate).trim() : null;
+      const moveOut = lease.moveOutDate ? String(lease.moveOutDate).trim() : null;
+      const isActive = !closedDate && (!moveOut || moveOut >= today);
+      const existing = map.get(unitId);
+      if (!existing || (isActive && !existing.isActive)) {
+        map.set(unitId, { leaseId, isActive });
+      }
+    }
+    const result = new Map();
+    for (const [unitId, { leaseId }] of map) {
+      result.set(unitId, leaseId);
+    }
+    return result;
+  },
 };

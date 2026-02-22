@@ -1,6 +1,7 @@
 import { caseRepository } from './case.repository.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
-import { NotFoundError } from '../../errors/index.js';
+import { NotFoundError, BadRequestError } from '../../errors/index.js';
+import { addCallCaseJob, getCaseActionsQueue } from '../../queues/case-actions.queue.js';
 
 export const caseService = {
   getDetail: async (tenantId, debtCaseId) => {
@@ -103,5 +104,39 @@ export const caseService = {
       await caseRepository.updateCaseAutomationStateById(s.id, { status: 'active' });
     }
     return { resumed: true, count: toResume.length };
+  },
+
+  /**
+   * Trigger an on-demand call for a debt case. For controlled testing and specific use cases.
+   * Enqueues a CALL_CASE job; the worker will process it.
+   */
+  triggerCall: async (tenantId, debtCaseId) => {
+    const tenant = await tenantRepository.findById(tenantId);
+    if (!tenant) throw new NotFoundError('Tenant');
+
+    const debtCase = await caseRepository.findDebtCaseById(debtCaseId, tenantId);
+    if (!debtCase) throw new NotFoundError('Case');
+
+    const queue = getCaseActionsQueue();
+    if (!queue) {
+      throw new BadRequestError(
+        'Call queue is not available. Set REDIS_URL and ensure the worker is running.'
+      );
+    }
+
+    const plain = debtCase.get ? debtCase.get({ plain: true }) : debtCase;
+    const debtor = plain.debtor;
+    if (!debtor?.phone) {
+      throw new BadRequestError('Case has no phone number. Add a phone to the debtor to place a call.');
+    }
+
+    const jobId = await addCallCaseJob(tenantId, debtCaseId);
+    if (!jobId) {
+      throw new BadRequestError(
+        'Could not enqueue call. Set REDIS_URL and ensure the worker is running.'
+      );
+    }
+
+    return { enqueued: true, jobId, message: 'Call enqueued. The worker will place the call shortly.' };
   },
 };
