@@ -7,7 +7,8 @@ import {
   Tenant,
 } from '../../models/index.js';
 import { getAuthIdentity } from '../../utils/auth-identity.js';
-import { createVoiceContextSignature } from '../twilio/context-signature.js';
+import { createVoiceContextSignature } from '../twilio/calls/context-signature.js';
+import { sendCollectionSms } from '../twilio/sms/twilio.sms.service.js';
 
 const DEFAULT_RULES = {
   min_upfront_pct: 25,
@@ -240,13 +241,7 @@ const toNumberOrNull = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-export const startDemoCall = async (payload) => {
-  const validation = validateStartCallPayload(payload);
-  if (!validation.ok) {
-    return { ok: false, status: 400, message: validation.message };
-  }
-
-  const input = validation.normalized;
+const buildDemoCaseContext = async (input) => {
   const tenant = await resolveDemoTenant();
   const flowPolicies = await ensureFlowPolicies(tenant.id);
   const flowPolicy = selectFlowPolicy(flowPolicies, input.daysPastDue);
@@ -255,7 +250,7 @@ export const startDemoCall = async (payload) => {
     return {
       ok: false,
       status: 500,
-      message: 'Could not resolve a flow policy for demo call.',
+      message: 'Could not resolve a flow policy for demo interaction.',
     };
   }
 
@@ -301,6 +296,23 @@ export const startDemoCall = async (payload) => {
       use_case: input.useCase,
     },
   });
+
+  return { ok: true, tenant, debtor, debtCase };
+};
+
+export const startDemoCall = async (payload) => {
+  const validation = validateStartCallPayload(payload);
+  if (!validation.ok) {
+    return { ok: false, status: 400, message: validation.message };
+  }
+
+  const input = validation.normalized;
+  const context = await buildDemoCaseContext(input);
+  if (!context.ok) {
+    return context;
+  }
+
+  const { tenant, debtor, debtCase } = context;
 
   const interaction = await InteractionLog.create({
     tenantId: tenant.id,
@@ -371,6 +383,60 @@ export const startDemoCall = async (payload) => {
       message: error?.message || 'Failed to create Twilio call',
     };
   }
+};
+
+export const startDemoSms = async (payload) => {
+  const validation = validateStartCallPayload(payload);
+  if (!validation.ok) {
+    return { ok: false, status: 400, message: validation.message };
+  }
+
+  const input = validation.normalized;
+  const context = await buildDemoCaseContext(input);
+  if (!context.ok) {
+    return context;
+  }
+
+  const { tenant, debtor, debtCase } = context;
+
+  const smsResult = await sendCollectionSms({
+    tenantId: tenant.id,
+    automationId: null,
+    state: {
+      debtCaseId: debtCase.id,
+      debtorId: debtor.id,
+    },
+    debtCase,
+    debtor,
+    stage: null,
+  });
+
+  if (!smsResult?.ok) {
+    return {
+      ok: false,
+      status: 502,
+      message: smsResult?.message || 'Failed to send Twilio SMS',
+    };
+  }
+
+  await debtCase.update({
+    status: 'CONTACTED',
+    lastContactedAt: new Date(),
+  });
+
+  return {
+    ok: true,
+    status: 201,
+    data: {
+      messageSid: smsResult.providerRef || null,
+      tenantId: tenant.id,
+      debtorId: debtor.id,
+      debtCaseId: debtCase.id,
+      interactionId: smsResult.interactionLogId || null,
+      to: input.phone,
+      amountDueCents: input.amountCents,
+    },
+  };
 };
 
 export const listDemoCallsForUser = async ({ req, limit }) => {
