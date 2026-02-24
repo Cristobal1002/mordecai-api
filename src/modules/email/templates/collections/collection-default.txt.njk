@@ -1,0 +1,12 @@
+Hi {{ debtor_name }},
+
+This is a reminder from Mordecai.
+Your balance is {{ amount_due }}.
+Days past due: {{ days_past_due }}.
+
+{% if payment_link %}
+Payment link: {{ payment_link }}
+{% endif %}
+
+If you need a payment plan, reply to this email and we will assist.
+

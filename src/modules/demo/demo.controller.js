@@ -1,4 +1,9 @@
-import { listDemoCallsForUser, startDemoCall, startDemoSms } from './demo.service.js';
+import {
+  listDemoCallsForUser,
+  startDemoCall,
+  startDemoSms,
+  startDemoEmail,
+} from './demo.service.js';
 
 const validateDemoToken = (req, res) => {
   const requiredToken = process.env.DEMO_API_TOKEN;
@@ -71,6 +76,30 @@ export const demoController = {
       return res.status(result.status || 201).json({
         success: true,
         message: 'Demo SMS sent',
+        data: result.data,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  },
+
+  startEmail: async (req, res, next) => {
+    try {
+      if (!validateDemoToken(req, res)) {
+        return;
+      }
+
+      const result = await startDemoEmail(req.body || {});
+      if (!result.ok) {
+        return res.status(result.status || 400).json({
+          success: false,
+          message: result.message || 'Could not send demo email',
+        });
+      }
+
+      return res.status(result.status || 201).json({
+        success: true,
+        message: 'Demo email sent',
         data: result.data,
       });
     } catch (error) {

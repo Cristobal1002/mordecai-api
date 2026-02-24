@@ -195,6 +195,40 @@ export async function runCollectionTick() {
               continue;
             }
 
+            if (dispatchChannel === 'email') {
+              const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.EMAIL_CASE, {
+                tenantId: automation.tenantId,
+                caseId: state.debtCaseId,
+                automationId: automation.id,
+                stateId: state.id,
+              });
+
+              if (!jobId) {
+                outcomes.push('email_dispatch_queue_unavailable');
+                await CollectionEvent.create({
+                  automationId: automation.id,
+                  debtCaseId: state.debtCaseId,
+                  channel: 'email',
+                  eventType: 'email_dispatch_queue_unavailable',
+                  payload: {
+                    reason: 'REDIS queue unavailable (missing REDIS_URL or queue init failed)',
+                  },
+                });
+              } else {
+                outcomes.push('email_queued');
+                await CollectionEvent.create({
+                  automationId: automation.id,
+                  debtCaseId: state.debtCaseId,
+                  channel: 'email',
+                  eventType: 'email_queued',
+                  payload: {
+                    jobId,
+                  },
+                });
+              }
+              continue;
+            }
+
             outcomes.push('dispatch_skipped_not_implemented');
             await CollectionEvent.create({
               automationId: automation.id,

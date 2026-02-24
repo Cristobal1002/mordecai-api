@@ -9,6 +9,7 @@ import {
 import { getAuthIdentity } from '../../utils/auth-identity.js';
 import { createVoiceContextSignature } from '../twilio/calls/context-signature.js';
 import { sendCollectionSms } from '../twilio/sms/twilio.sms.service.js';
+import { sendCollectionEmail } from '../email/ses/ses.email.service.js';
 
 const DEFAULT_RULES = {
   min_upfront_pct: 25,
@@ -33,6 +34,9 @@ const parseAmountUsdToCents = (value) => {
 };
 
 const normalizePhone = (value) => String(value || '').replace(/[^\d+]/g, '');
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
+const isValidEmail = (value) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 
 const getTwilioConfig = () => {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -204,7 +208,7 @@ const validateStartCallPayload = (payload = {}) => {
     normalized: {
       name,
       phone,
-      email: payload.email ? String(payload.email).trim() : null,
+      email: payload.email ? normalizeEmail(payload.email) : null,
       amountCents,
       daysPastDue: Math.round(daysPastDue),
       dueDate: payload.dueDate || null,
@@ -434,6 +438,63 @@ export const startDemoSms = async (payload) => {
       debtCaseId: debtCase.id,
       interactionId: smsResult.interactionLogId || null,
       to: input.phone,
+      amountDueCents: input.amountCents,
+    },
+  };
+};
+
+export const startDemoEmail = async (payload) => {
+  const validation = validateStartCallPayload(payload);
+  if (!validation.ok) {
+    return { ok: false, status: 400, message: validation.message };
+  }
+
+  const input = validation.normalized;
+  if (!input.email || !isValidEmail(input.email)) {
+    return { ok: false, status: 400, message: 'email must be valid' };
+  }
+
+  const context = await buildDemoCaseContext(input);
+  if (!context.ok) {
+    return context;
+  }
+
+  const { tenant, debtor, debtCase } = context;
+  const emailResult = await sendCollectionEmail({
+    tenantId: tenant.id,
+    automationId: null,
+    state: {
+      debtCaseId: debtCase.id,
+      debtorId: debtor.id,
+    },
+    debtCase,
+    debtor,
+    stage: null,
+  });
+
+  if (!emailResult?.ok) {
+    return {
+      ok: false,
+      status: 502,
+      message: emailResult?.message || 'Failed to send demo email',
+    };
+  }
+
+  await debtCase.update({
+    status: 'CONTACTED',
+    lastContactedAt: new Date(),
+  });
+
+  return {
+    ok: true,
+    status: 201,
+    data: {
+      messageId: emailResult.providerRef || null,
+      tenantId: tenant.id,
+      debtorId: debtor.id,
+      debtCaseId: debtCase.id,
+      interactionId: emailResult.interactionLogId || null,
+      to: input.email,
       amountDueCents: input.amountCents,
     },
   };
