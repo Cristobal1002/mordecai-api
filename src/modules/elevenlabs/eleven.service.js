@@ -6,6 +6,7 @@ import {
   InteractionLog,
   PaymentAgreement,
   PaymentLink,
+  Tenant,
 } from '../../models/index.js';
 import { resolvePolicyForCase } from '../collections/policy-resolver.service.js';
 import { logger } from '../../utils/logger.js';
@@ -121,6 +122,9 @@ const buildCaseMetadataDynamicVariables = (meta = {}) => {
     'unit_number',
     'language',
     'use_case',
+    'opening_message',
+    'tenant_name',
+    'tenant_display_name',
   ];
 
   const acc = keys.reduce((result, key) => {
@@ -307,12 +311,42 @@ export const registerCallForInteraction = async ({
 
   const resolvedPolicy = await resolvePolicyForCase(interaction.tenantId, debtCase);
   const flowRules = getRulesFromResolvedPolicy(resolvedPolicy);
+  const tenant = await Tenant.findByPk(interaction.tenantId, {
+    attributes: ['id', 'name'],
+  });
 
   const customInstructions = resolvedPolicy?.rules?.custom_instructions ?? '';
+  const openingMessageFromRules = resolvedPolicy?.rules?.opening_message ?? '';
+  const tenantDisplayNameFromRules = resolvedPolicy?.rules?.tenant_display_name ?? '';
   const metaForVariables = {
     ...(debtCase.meta || {}),
     channels: debtCase.meta?.channels ?? resolvedPolicy?.rules?.payment_channels,
   };
+  const openingMessage = String(
+    metaForVariables.opening_message || openingMessageFromRules || ''
+  )
+    .trim()
+    .slice(0, 2000);
+  const tenantDisplayName = String(
+    metaForVariables.tenant_name ||
+      metaForVariables.tenant_display_name ||
+      tenantDisplayNameFromRules ||
+      tenant?.name ||
+      ''
+  )
+    .trim()
+    .slice(0, 200);
+  if (!tenantDisplayName) {
+    throw new Error(
+      'Missing tenant display name for ElevenLabs context (tenant_name is required).'
+    );
+  }
+
+  const fallbackOpeningMessage = `Hi ${debtor.fullName}, I'm Ivanna from ${tenantDisplayName}. I'm calling about your ${centsToDisplayAmount(
+    debtCase.amountDueCents
+  )} dollar balance. Is now a good time to review payment options?`;
+  const resolvedOpeningMessage = openingMessage || fallbackOpeningMessage;
+
   const dynamicVariables = {
     tenant_id: String(interaction.tenantId),
     case_id: String(debtCase.id),
@@ -326,6 +360,10 @@ export const registerCallForInteraction = async ({
     max_installments: String(flowRules.maxInstallments),
     min_upfront_pct: String(flowRules.minUpfrontPct),
     custom_instructions: String(customInstructions || '').slice(0, 2000),
+    opening_message: resolvedOpeningMessage,
+    initial_message: resolvedOpeningMessage,
+    tenant_name: tenantDisplayName,
+    tenant_display_name: tenantDisplayName,
     ...buildCaseMetadataDynamicVariables(metaForVariables),
     ...extraDynamicVariables,
   };

@@ -195,10 +195,14 @@ const validateStartCallPayload = (payload = {}) => {
   const phone = normalizePhone(payload.phone);
   const amountCents = parseAmountUsdToCents(payload.amountUsd);
   const daysPastDue = Number(payload.daysPastDue ?? 12);
+  const tenantDisplayName = payload.tenantDisplayName
+    ? String(payload.tenantDisplayName).trim().slice(0, 200)
+    : '';
 
   if (!name) return { ok: false, message: 'name is required' };
   if (!phone || phone.length < 8) return { ok: false, message: 'phone must be valid E.164' };
   if (!amountCents) return { ok: false, message: 'amountUsd must be a positive number' };
+  if (!tenantDisplayName) return { ok: false, message: 'tenantDisplayName is required' };
   if (!Number.isFinite(daysPastDue) || daysPastDue < 0) {
     return { ok: false, message: 'daysPastDue must be >= 0' };
   }
@@ -215,6 +219,10 @@ const validateStartCallPayload = (payload = {}) => {
       options: Array.isArray(payload.options) ? payload.options : [],
       channels: Array.isArray(payload.channels) ? payload.channels : [],
       useCase: payload.useCase ? String(payload.useCase).trim() : '',
+      openingMessage: payload.openingMessage
+        ? String(payload.openingMessage).trim().slice(0, 2000)
+        : '',
+      tenantDisplayName,
     },
   };
 };
@@ -247,6 +255,7 @@ const toNumberOrNull = (value) => {
 
 const buildDemoCaseContext = async (input) => {
   const tenant = await resolveDemoTenant();
+  const effectiveTenantDisplayName = input.tenantDisplayName || tenant.name;
   const flowPolicies = await ensureFlowPolicies(tenant.id);
   const flowPolicy = selectFlowPolicy(flowPolicies, input.daysPastDue);
 
@@ -298,6 +307,9 @@ const buildDemoCaseContext = async (input) => {
       options: input.options,
       channels: input.channels,
       use_case: input.useCase,
+      opening_message: input.openingMessage,
+      tenant_name: effectiveTenantDisplayName,
+      tenant_display_name: effectiveTenantDisplayName,
     },
   });
 
