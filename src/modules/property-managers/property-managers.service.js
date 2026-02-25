@@ -9,6 +9,8 @@ import {
   PmsConnection,
   PmsDebtor,
   PmsLease,
+  PmsProperty,
+  PmsUnit,
   Software,
   ArCharge,
   ArPayment,
@@ -279,6 +281,22 @@ export const propertyManagersService = {
     return { enqueued: true, jobId };
   },
 
+  getBuildCasesJobStatus: async (tenantId, connectionId, jobId) => {
+    await ensureTenant(tenantId);
+    await propertyManagersService.getById(tenantId, connectionId);
+    const { getJobById } = await import('../../queues/pms-sync.queue.js');
+    const job = await getJobById(jobId);
+    if (!job || job.data?.tenantId !== tenantId || job.data?.connectionId !== connectionId) {
+      return null;
+    }
+    const state = await job.getState();
+    return {
+      status: state,
+      result: job.returnvalue ?? null,
+      failedReason: job.failedReason ?? null,
+    };
+  },
+
   /**
    * Build debt_cases (and debtors) from PMS data so automations can enroll them.
    * Uses ArBalance (balance > 0) + PmsLease + PmsDebtor. Creates/updates core Debtor and DebtCase per lease with balance.
@@ -343,7 +361,11 @@ export const propertyManagersService = {
 
     const leases = await PmsLease.findAll({
       where: { id: { [Op.in]: leaseIds } },
-      include: [{ model: PmsDebtor, as: 'pmsDebtor', required: true }],
+      include: [
+        { model: PmsDebtor, as: 'pmsDebtor', required: true },
+        { model: PmsProperty, as: 'pmsProperty', required: false },
+        { model: PmsUnit, as: 'pmsUnit', required: false },
+      ],
     });
     const debtorCache = new Map();
     const existingCases = await DebtCase.findAll({
@@ -404,6 +426,9 @@ export const propertyManagersService = {
         pms_connection_id: connectionId,
         pms_lease_id: lease.id,
         pms_debtor_id: pmsDebtor.id,
+        lease_number: lease.leaseNumber ?? lease.externalId ?? null,
+        property_name: lease.pmsProperty?.name ?? null,
+        unit_number: lease.pmsUnit?.unitNumber ?? null,
       };
       const existing = casesByPmsLeaseId.get(lease.id);
       if (existing) {

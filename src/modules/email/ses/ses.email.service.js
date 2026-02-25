@@ -1,7 +1,8 @@
-import { CollectionEvent, InteractionLog } from '../../../models/index.js';
+import { CollectionEvent, InteractionLog, Tenant } from '../../../models/index.js';
 import { logger } from '../../../utils/logger.js';
 import { sendSesEmail } from './ses.email.client.js';
 import { renderCollectionEmail } from './ses.email.template.js';
+import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
 
 const createCollectionEvent = async ({
   automationId,
@@ -75,7 +76,19 @@ export const sendCollectionEmail = async ({
   let interaction = null;
 
   try {
-    const rendered = renderCollectionEmail({ debtCase, debtor, stage });
+    const tenant = tenantId ? await Tenant.findByPk(tenantId, { attributes: ['name'] }) : null;
+    const paymentLink = await getOrCreatePaymentLinkUrl({
+      tenantId,
+      debtCaseId,
+      paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
+    });
+    const rendered = renderCollectionEmail({
+      debtCase,
+      debtor,
+      stage,
+      tenant,
+      custom: { paymentLink },
+    });
     interaction = await createInteractionLog({
       tenantId,
       debtCaseId,

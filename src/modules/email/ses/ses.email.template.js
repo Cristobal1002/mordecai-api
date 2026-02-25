@@ -66,6 +66,7 @@ export const buildCollectionEmailVariables = ({
   debtCase,
   debtor,
   stage,
+  tenant,
   custom = {},
 }) => {
   const currency = debtCase?.currency || DEFAULT_CURRENCY;
@@ -74,6 +75,7 @@ export const buildCollectionEmailVariables = ({
     ? String(debtCase.daysPastDue)
     : 'N/A';
 
+  const meta = debtCase?.meta || {};
   return {
     debtor_name: debtor?.fullName || 'there',
     debtor_email: debtor?.email || '',
@@ -83,15 +85,18 @@ export const buildCollectionEmailVariables = ({
     days_past_due: daysPastDue,
     due_date: debtCase?.dueDate || '',
     stage_name: stage?.name || 'collection stage',
-    payment_link: custom.paymentLink || '',
+    payment_link: custom.paymentLink || debtCase?.paymentLinkUrl || '',
     case_id: debtCase?.id || '',
+    property_name: meta.property_name || meta.propertyName || '',
+    unit_number: meta.unit_number || meta.unitNumber || '',
+    lease_number: meta.lease_number || meta.leaseNumber || meta.lease_id || '',
     ...custom,
   };
 };
 
-export const renderCollectionEmail = ({ debtCase, debtor, stage }) => {
+export const renderCollectionEmail = ({ debtCase, debtor, stage, tenant, custom = {} }) => {
   const stageRules = stage?.rules || {};
-  const variables = buildCollectionEmailVariables({ debtCase, debtor, stage });
+  const variables = buildCollectionEmailVariables({ debtCase, debtor, stage, tenant, custom });
   const templateName = resolveTemplateName(stageRules);
 
   const subjectTemplate =

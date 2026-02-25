@@ -413,6 +413,7 @@ export const startDemoSms = async (payload) => {
     debtCase,
     debtor,
     stage: null,
+    tenant,
   });
 
   if (!smsResult?.ok) {

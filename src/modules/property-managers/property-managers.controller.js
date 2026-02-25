@@ -247,4 +247,18 @@ export const propertyManagersController = {
       next(error);
     }
   },
+
+  getBuildCasesJobStatus: async (req, res, next) => {
+    try {
+      const { tenantId, connectionId } = req.params;
+      const jobId = String(req.query.jobId || '').trim();
+      const status = await propertyManagersService.getBuildCasesJobStatus(tenantId, connectionId, jobId);
+      if (!status) {
+        return res.notFound('Job not found or does not belong to this connection');
+      }
+      res.ok(status, 'Build cases job status retrieved');
+    } catch (error) {
+      next(error);
+    }
+  },
 };

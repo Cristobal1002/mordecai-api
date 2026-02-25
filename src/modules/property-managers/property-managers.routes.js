@@ -15,6 +15,7 @@ import {
   listPmsChargesValidator,
   listPmsPaymentsValidator,
   getPmsBalancesSummaryValidator,
+  getBuildCasesStatusValidator,
 } from './property-managers.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 import { requireAuth } from '../../middlewares/index.js';
@@ -172,6 +173,15 @@ router.post(
   getPropertyManagerValidator,
   validateRequest,
   propertyManagersController.buildDebtCasesFromPms
+);
+
+// GET /api/v1/tenants/:tenantId/pms-connections/:connectionId/build-cases/status?jobId=xxx
+router.get(
+  '/:tenantId/pms-connections/:connectionId/build-cases/status',
+  requireAuth(),
+  getBuildCasesStatusValidator,
+  validateRequest,
+  propertyManagersController.getBuildCasesJobStatus
 );
 
 export default router;

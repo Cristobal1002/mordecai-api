@@ -7,6 +7,7 @@ import {
   Debtor,
   PmsConnection,
   CollectionStage,
+  PaymentAgreement,
 } from '../../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../../utils/logger.js';
@@ -167,6 +168,31 @@ export const automationRepository = {
       return rows.map((r) => r.debt_case_id ?? r.debtCaseId);
     } catch (error) {
       logger.error({ error, automationId }, 'Error finding enrolled debt case ids');
+      throw error;
+    }
+  },
+
+  findAgreements: async (automationId, tenantId, options = {}) => {
+    try {
+      const debtCaseIds = await automationRepository.findEnrolledDebtCaseIds(automationId, options);
+      if (debtCaseIds.length === 0) return [];
+
+      return await PaymentAgreement.findAll({
+        where: { debtCaseId: { [Op.in]: debtCaseIds }, tenantId },
+        include: [
+          {
+            model: DebtCase,
+            as: 'debtCase',
+            required: true,
+            attributes: ['id', 'amountDueCents', 'currency', 'status'],
+            include: [{ model: Debtor, as: 'debtor', attributes: ['id', 'fullName', 'email', 'phone'] }],
+          },
+        ],
+        order: [['createdAt', 'DESC']],
+        ...options,
+      });
+    } catch (error) {
+      logger.error({ error, automationId }, 'Error finding automation agreements');
       throw error;
     }
   },

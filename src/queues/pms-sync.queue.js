@@ -68,3 +68,26 @@ export async function addBuildCasesJob(connectionId, tenantId) {
   logger.info({ connectionId, tenantId, jobId: job.id }, 'Build cases job enqueued');
   return job.id;
 }
+
+/**
+ * Get job by id. Returns null if queue unavailable or job not found.
+ */
+export async function getJobById(jobId) {
+  const q = getPmsSyncQueue();
+  if (!q) return null;
+  return q.getJob(jobId);
+}
+
+/**
+ * Get job status for build-cases or sync. Returns null if queue unavailable or job not found.
+ */
+export async function getJobStatus(jobId) {
+  const job = await getJobById(jobId);
+  if (!job) return null;
+  const state = await job.getState();
+  return {
+    status: state,
+    result: job.returnvalue ?? null,
+    failedReason: job.failedReason ?? null,
+  };
+}

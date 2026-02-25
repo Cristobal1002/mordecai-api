@@ -83,6 +83,14 @@ router.get(
   automationController.getActivity
 );
 
+// GET /api/v1/tenants/:tenantId/automations/:automationId/agreements
+router.get(
+  '/:tenantId/automations/:automationId/agreements',
+  getActivityValidator,
+  validateRequest,
+  automationController.getAgreements
+);
+
 // POST /api/v1/tenants/:tenantId/automations/:automationId/enroll
 router.post(
   '/:tenantId/automations/:automationId/enroll',

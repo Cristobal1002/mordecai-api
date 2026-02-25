@@ -13,6 +13,7 @@ export class CollectionStage extends Model {
         minDaysPastDue: { type: DataTypes.INTEGER, allowNull: false, field: 'min_days_past_due' },
         maxDaysPastDue: { type: DataTypes.INTEGER, field: 'max_days_past_due' },
         channels: { type: DataTypes.JSONB, defaultValue: {} },
+        messagingConfig: { type: DataTypes.JSONB, defaultValue: {}, field: 'messaging_config' },
         tone: { type: DataTypes.STRING(40), defaultValue: 'professional' },
         rules: { type: DataTypes.JSONB, defaultValue: {} },
         isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },

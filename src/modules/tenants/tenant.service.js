@@ -83,6 +83,8 @@ export const tenantService = {
     });
   },
 
+  requireTenantAdmin: (tenantId, req) => requireTenantAdmin(tenantId, req),
+
   getAdminSnapshot: async (tenantId, req) => {
     await requireTenantAdmin(tenantId, req);
 
@@ -115,5 +117,24 @@ export const tenantService = {
         adminMembers,
       },
     };
+  },
+
+  update: async (tenantId, data, req) => {
+    await requireTenantAdmin(tenantId, req);
+
+    const tenant = await tenantRepository.findById(tenantId);
+    if (!tenant) {
+      throw new NotFoundError('Tenant');
+    }
+
+    const updates = {};
+    if (data.name !== undefined) updates.name = data.name.trim();
+    if (data.timezone !== undefined) updates.timezone = data.timezone?.trim() || 'America/New_York';
+    if (data.settings !== undefined) updates.settings = data.settings;
+
+    if (Object.keys(updates).length === 0) return tenant;
+
+    await tenant.update(updates);
+    return tenant;
   },
 };

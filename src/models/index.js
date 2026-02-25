@@ -32,6 +32,11 @@ import { CollectionStage } from './collection-stage.model.js';
 import { CollectionAutomation } from './collection-automation.model.js';
 import { CaseAutomationState } from './case-automation-state.model.js';
 import { CollectionEvent } from './collection-event.model.js';
+import { TenantMessageTemplate } from './tenant-message-template.model.js';
+import { TenantMessageAttachment } from './tenant-message-attachment.model.js';
+import { TenantPaymentChannel } from './tenant-payment-channel.model.js';
+import { TenantBranding } from './tenant-branding.model.js';
+import { PaymentLink } from './payment-link.model.js';
 
 export const initModels = (sequelize) => {
   // Inicializar modelos
@@ -65,6 +70,11 @@ export const initModels = (sequelize) => {
   CollectionAutomation.initModel(sequelize);
   CaseAutomationState.initModel(sequelize);
   CollectionEvent.initModel(sequelize);
+  TenantMessageTemplate.initModel(sequelize);
+  TenantMessageAttachment.initModel(sequelize);
+  TenantPaymentChannel.initModel(sequelize);
+  TenantBranding.initModel(sequelize);
+  PaymentLink.initModel(sequelize);
 
   // Definir relaciones
 
@@ -89,6 +99,11 @@ export const initModels = (sequelize) => {
   Tenant.hasMany(ArAgingSnapshot, { foreignKey: 'tenant_id', as: 'arAgingSnapshots' });
   Tenant.hasMany(CollectionStrategy, { foreignKey: 'tenant_id', as: 'collectionStrategies' });
   Tenant.hasMany(CollectionAutomation, { foreignKey: 'tenant_id', as: 'collectionAutomations' });
+  Tenant.hasMany(TenantMessageTemplate, { foreignKey: 'tenant_id', as: 'messageTemplates' });
+  Tenant.hasMany(TenantMessageAttachment, { foreignKey: 'tenant_id', as: 'messageAttachments' });
+  Tenant.hasMany(TenantPaymentChannel, { foreignKey: 'tenant_id', as: 'paymentChannels' });
+  Tenant.hasOne(TenantBranding, { foreignKey: 'tenant_id', as: 'branding' });
+  Tenant.hasMany(PaymentLink, { foreignKey: 'tenant_id', as: 'paymentLinks' });
 
   // Software hasMany...
   Software.hasMany(SoftwareSetupStep, { foreignKey: 'software_id', as: 'setupSteps' });
@@ -121,6 +136,8 @@ export const initModels = (sequelize) => {
 
   // DebtCase hasMany...
   DebtCase.hasMany(PaymentAgreement, { foreignKey: 'debt_case_id', as: 'paymentAgreements' });
+  DebtCase.hasMany(PaymentLink, { foreignKey: 'debt_case_id', as: 'paymentLinks' });
+  PaymentAgreement.hasMany(PaymentLink, { foreignKey: 'payment_agreement_id', as: 'paymentLinks' });
   DebtCase.hasMany(InteractionLog, { foreignKey: 'debt_case_id', as: 'interactionLogs' });
 
   // BelongsTo relationships
@@ -212,6 +229,14 @@ export const initModels = (sequelize) => {
   CaseAutomationState.belongsTo(CollectionStage, { foreignKey: 'current_stage_id', as: 'currentStage' });
   CollectionEvent.belongsTo(CollectionAutomation, { foreignKey: 'automation_id', as: 'automation' });
   CollectionEvent.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
+
+  TenantMessageTemplate.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  TenantMessageAttachment.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  TenantPaymentChannel.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  TenantBranding.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PaymentLink.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PaymentLink.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
+  PaymentLink.belongsTo(PaymentAgreement, { foreignKey: 'payment_agreement_id', as: 'paymentAgreement' });
 };
 
 export {
@@ -245,5 +270,10 @@ export {
   CollectionAutomation,
   CaseAutomationState,
   CollectionEvent,
+  TenantMessageTemplate,
+  TenantMessageAttachment,
+  TenantPaymentChannel,
+  TenantBranding,
+  PaymentLink,
 };
 

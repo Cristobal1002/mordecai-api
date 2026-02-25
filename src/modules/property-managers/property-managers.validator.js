@@ -116,3 +116,9 @@ export const listPmsPaymentsValidator = [
 ];
 
 export const getPmsBalancesSummaryValidator = [tenantIdParam];
+
+export const getBuildCasesStatusValidator = [
+  tenantIdParam,
+  connectionIdParam,
+  query('jobId').notEmpty().withMessage('jobId is required').isString().trim(),
+];

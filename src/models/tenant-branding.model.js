@@ -1,0 +1,39 @@
+/**
+ * TenantBranding - White-label branding per tenant for payment pages (1:1 with Tenant)
+ * When null, use Mordecai defaults for a clean, minimal look.
+ */
+import { Model, DataTypes } from 'sequelize';
+
+export class TenantBranding extends Model {
+  static initModel(sequelize) {
+    TenantBranding.init(
+      {
+        id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+        tenantId: {
+          type: DataTypes.UUID,
+          allowNull: false,
+          unique: true,
+          field: 'tenant_id',
+          references: { model: 'tenants', key: 'id' },
+        },
+        companyName: { type: DataTypes.STRING(160), field: 'company_name' },
+        logoUrl: { type: DataTypes.TEXT, field: 'logo_url' },
+        primaryColor: { type: DataTypes.STRING(7), field: 'primary_color' },
+        secondaryColor: { type: DataTypes.STRING(7), field: 'secondary_color' },
+        supportEmail: { type: DataTypes.STRING(160), field: 'support_email' },
+        supportPhone: { type: DataTypes.STRING(40), field: 'support_phone' },
+        footerText: { type: DataTypes.TEXT, field: 'footer_text' },
+        createdAt: { type: DataTypes.DATE, field: 'created_at' },
+        updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
+      },
+      {
+        sequelize,
+        modelName: 'TenantBranding',
+        tableName: 'tenant_brandings',
+        timestamps: true,
+        underscored: true,
+      }
+    );
+    return TenantBranding;
+  }
+}

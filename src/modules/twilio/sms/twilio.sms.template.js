@@ -45,10 +45,15 @@ export const buildCollectionSmsBody = ({
   daysPastDue,
   stageName,
   customTemplate,
+  meta = {},
+  dueDate = '',
+  paymentLink = '',
+  tenantName = '',
 }) => {
   const amount = toAmount(amountDueCents);
   const amountFormatted = formatAmount(amount, currency || DEFAULT_CURRENCY);
   const vars = {
+    tenant_name: tenantName || '',
     debtor_name: debtorName || 'there',
     amount_due: amountFormatted || 'your balance',
     days_past_due:
@@ -56,6 +61,11 @@ export const buildCollectionSmsBody = ({
         ? String(daysPastDue)
         : 'N/A',
     stage_name: stageName || 'collection stage',
+    due_date: dueDate || '',
+    payment_link: paymentLink || '',
+    property_name: meta.property_name || meta.propertyName || '',
+    unit_number: meta.unit_number || meta.unitNumber || '',
+    lease_number: meta.lease_number || meta.leaseNumber || meta.lease_id || '',
   };
 
   const renderedCustom = renderTemplate(customTemplate, vars);
@@ -63,7 +73,10 @@ export const buildCollectionSmsBody = ({
     return trimToMaxLength(renderedCustom);
   }
 
-  const fallback = `Hi ${vars.debtor_name}, this is Mordecai. Your balance ${vars.amount_due} is ${vars.days_past_due} days past due. Reply to discuss payment options.`;
+  const linkPart = vars.payment_link
+    ? ` View your account and pay here: ${vars.payment_link}`
+    : '';
+  const fallback = `Hi ${vars.debtor_name}, this is Mordecai. Your balance ${vars.amount_due} is ${vars.days_past_due} days past due.${linkPart} Reply to discuss payment options.`;
   return trimToMaxLength(fallback);
 };
 

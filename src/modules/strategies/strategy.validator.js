@@ -51,6 +51,7 @@ export const createStageValidator = [
       return true;
     }),
   body('channels').optional().isObject().withMessage('channels must be an object'),
+  body('messagingConfig').optional().isObject().withMessage('messagingConfig must be an object'),
   body('tone').optional().isIn(['friendly', 'professional', 'firm']).withMessage('tone must be friendly, professional, or firm'),
   body('rules').optional().isObject().withMessage('rules must be an object'),
 ];
@@ -72,6 +73,7 @@ export const updateStageValidator = [
       return true;
     }),
   body('channels').optional().isObject().withMessage('channels must be an object'),
+  body('messagingConfig').optional().isObject().withMessage('messagingConfig must be an object'),
   body('tone').optional().isIn(['friendly', 'professional', 'firm']).withMessage('tone must be friendly, professional, or firm'),
   body('rules').optional().isObject().withMessage('rules must be an object'),
   body('isActive').optional().isBoolean().withMessage('isActive must be boolean'),

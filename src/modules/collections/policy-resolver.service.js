@@ -25,6 +25,7 @@ const SYSTEM_DEFAULT_RULES = {
   half_pct: 50,
   max_installments: 4,
   custom_instructions: '',
+  payment_channels: ['link', 'card'],
 };
 
 /**
@@ -42,6 +43,11 @@ function normalizeRules(raw) {
   // Normalize INSTALLMENTS -> INSTALLMENTS for contract; agent may map to INSTALLMENTS_4 internally
   const allowedPlans = allowedArr.filter(Boolean);
   const customInstructions = raw.custom_instructions ?? raw.customInstructions ?? '';
+  const paymentChannelsRaw = raw.payment_channels ?? raw.paymentChannels;
+  const paymentChannels = Array.isArray(paymentChannelsRaw)
+    ? paymentChannelsRaw.map((c) => String(c).toLowerCase()).filter(Boolean)
+    : SYSTEM_DEFAULT_RULES.payment_channels;
+
   return {
     allowed_plans: allowedPlans.length ? allowedPlans : SYSTEM_DEFAULT_RULES.allowed_plans,
     min_upfront_pct: Number(raw.min_upfront_pct ?? raw.minUpfrontPct ?? SYSTEM_DEFAULT_RULES.min_upfront_pct),
@@ -50,6 +56,7 @@ function normalizeRules(raw) {
     min_installments: raw.min_installments != null ? Number(raw.min_installments) : undefined,
     require_down_payment: raw.require_down_payment ?? raw.requireDownPayment,
     custom_instructions: typeof customInstructions === 'string' ? customInstructions : '',
+    payment_channels: paymentChannels.length ? paymentChannels : SYSTEM_DEFAULT_RULES.payment_channels,
   };
 }
 

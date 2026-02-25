@@ -105,6 +105,16 @@ export const automationController = {
     }
   },
 
+  getAgreements: async (req, res, next) => {
+    try {
+      const { tenantId, automationId } = req.params;
+      const result = await automationService.getAgreements(tenantId, automationId);
+      res.ok(result, 'Automation agreements retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
   enroll: async (req, res, next) => {
     try {
       const { tenantId, automationId } = req.params;

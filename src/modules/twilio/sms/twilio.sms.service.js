@@ -2,6 +2,7 @@ import { CollectionEvent, InteractionLog } from '../../../models/index.js';
 import { logger } from '../../../utils/logger.js';
 import { buildCollectionSmsBody } from './twilio.sms.template.js';
 import { sendTwilioSms } from './twilio.sms.client.js';
+import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
 
 const createCollectionEvent = async ({
   automationId,
@@ -44,6 +45,7 @@ export const sendCollectionSms = async ({
   debtCase,
   debtor,
   stage,
+  tenant,
 }) => {
   const debtCaseId = debtCase?.id || state?.debtCaseId;
   const debtorId = debtor?.id || debtCase?.debtorId || null;
@@ -67,6 +69,13 @@ export const sendCollectionSms = async ({
     };
   }
 
+  // Always ensure a payment link so the debtor can view their account and pay
+  const paymentLink = await getOrCreatePaymentLinkUrl({
+    tenantId,
+    debtCaseId,
+    paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
+  });
+
   const customTemplate =
     stage?.rules?.sms_template ||
     stage?.rules?.smsTemplate ||
@@ -79,6 +88,10 @@ export const sendCollectionSms = async ({
     daysPastDue: debtCase?.daysPastDue,
     stageName: stage?.name,
     customTemplate,
+    meta: debtCase?.meta || {},
+    dueDate: debtCase?.dueDate || '',
+    paymentLink,
+    tenantName: tenant?.name || '',
   });
 
   let interaction = null;

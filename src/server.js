@@ -36,7 +36,15 @@ export const startServer = async () => {
 
     return server;
   } catch (error) {
-    logger.error({ error }, 'Error starting the server');
+    logger.error(
+      {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+        err: error,
+      },
+      'Error starting the server'
+    );
     process.exit(1);
   }
 };

@@ -74,7 +74,15 @@ export const loadDatabase = async () => {
       logger.info('Database sync disabled (use migrations for schema changes)');
     }
   } catch (error) {
-    logger.error({ error }, 'Error loading the database');
+    logger.error(
+      {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+        err: error,
+      },
+      'Error loading the database'
+    );
     throw error;
   }
 };

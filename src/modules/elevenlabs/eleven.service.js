@@ -1,9 +1,11 @@
+import crypto from 'crypto';
 import {
   DebtCase,
   Debtor,
   FlowPolicy,
   InteractionLog,
   PaymentAgreement,
+  PaymentLink,
 } from '../../models/index.js';
 import { resolvePolicyForCase } from '../collections/policy-resolver.service.js';
 import { logger } from '../../utils/logger.js';
@@ -47,9 +49,27 @@ const toDateOnly = (value) => {
   return date.toISOString().slice(0, 10);
 };
 
-const buildPaymentLinkUrl = (agreementId) => {
-  const baseUrl = process.env.PAYMENTS_BASE_URL || 'https://pay.mordecai.ai/agreement';
-  return `${baseUrl.replace(/\/$/, '')}/${agreementId}`;
+/**
+ * Create a PaymentLink record and return the URL.
+ * URL format: {base}/p/{token} — does not expose agreement ID.
+ */
+const createPaymentLinkAndGetUrl = async ({ tenantId, debtCaseId, paymentAgreementId }) => {
+  const { PaymentLink } = await import('../../models/index.js');
+  const crypto = await import('crypto');
+  const token = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 hours
+
+  await PaymentLink.create({
+    tenantId,
+    debtCaseId,
+    paymentAgreementId: paymentAgreementId ?? null,
+    token,
+    status: 'PENDING',
+    expiresAt,
+  });
+
+  const baseUrl = (process.env.PAYMENTS_BASE_URL || 'https://pay.mordecai.ai').replace(/\/$/, '');
+  return `${baseUrl}/p/${token}`;
 };
 
 const parseAmountCents = (value) => {
@@ -289,6 +309,10 @@ export const registerCallForInteraction = async ({
   const flowRules = getRulesFromResolvedPolicy(resolvedPolicy);
 
   const customInstructions = resolvedPolicy?.rules?.custom_instructions ?? '';
+  const metaForVariables = {
+    ...(debtCase.meta || {}),
+    channels: debtCase.meta?.channels ?? resolvedPolicy?.rules?.payment_channels,
+  };
   const dynamicVariables = {
     tenant_id: String(interaction.tenantId),
     case_id: String(debtCase.id),
@@ -302,7 +326,7 @@ export const registerCallForInteraction = async ({
     max_installments: String(flowRules.maxInstallments),
     min_upfront_pct: String(flowRules.minUpfrontPct),
     custom_instructions: String(customInstructions || '').slice(0, 2000),
-    ...buildCaseMetadataDynamicVariables(debtCase.meta || {}),
+    ...buildCaseMetadataDynamicVariables(metaForVariables),
     ...extraDynamicVariables,
   };
 
@@ -473,7 +497,11 @@ export const createPaymentAgreementFromTool = async ({
     },
   });
 
-  const paymentLinkUrl = buildPaymentLinkUrl(agreement.id);
+  const paymentLinkUrl = await createPaymentLinkAndGetUrl({
+    tenantId,
+    debtCaseId: debtCase.id,
+    paymentAgreementId: agreement.id,
+  });
   await agreement.update({ paymentLinkUrl });
 
   const caseStatus = agreementType === 'INSTALLMENTS' ? 'PAYMENT_PLAN' : 'PROMISE_TO_PAY';

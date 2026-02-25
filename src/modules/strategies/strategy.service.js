@@ -92,6 +92,7 @@ export const strategyService = {
           minDaysPastDue: minDays,
           maxDaysPastDue: maxDays,
           channels: data.channels ?? {},
+          messagingConfig: data.messagingConfig ?? {},
           tone: data.tone ?? 'professional',
           rules: data.rules ?? {},
           isActive: true,
@@ -127,6 +128,7 @@ export const strategyService = {
     if (data.minDaysPastDue !== undefined) payload.minDaysPastDue = minDays;
     if (data.maxDaysPastDue !== undefined) payload.maxDaysPastDue = maxDays;
     if (data.channels !== undefined) payload.channels = data.channels;
+    if (data.messagingConfig !== undefined) payload.messagingConfig = data.messagingConfig;
     if (data.tone !== undefined) payload.tone = data.tone;
     if (data.rules !== undefined) payload.rules = data.rules;
     if (data.isActive !== undefined) payload.isActive = data.isActive;

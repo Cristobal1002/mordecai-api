@@ -225,6 +225,35 @@ export const automationService = {
     });
   },
 
+  getAgreements: async (tenantId, automationId) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+
+    const agreements = await automationRepository.findAgreements(automationId, tenantId);
+    return agreements.map((a) => {
+      const plain = a.get ? a.get({ plain: true }) : a;
+      const debtCase = plain.debtCase || {};
+      const debtor = debtCase.debtor || {};
+      return {
+        id: plain.id,
+        debtCaseId: plain.debtCaseId,
+        type: plain.type,
+        status: plain.status,
+        totalAmountCents: plain.totalAmountCents,
+        downPaymentCents: plain.downPaymentCents,
+        installments: plain.installments,
+        promiseDate: plain.promiseDate,
+        startDate: plain.startDate,
+        paymentLinkUrl: plain.paymentLinkUrl,
+        createdAt: plain.createdAt,
+        debtorName: debtor.fullName,
+        debtorEmail: debtor.email,
+        debtorPhone: debtor.phone,
+        currency: debtCase.currency || 'USD',
+      };
+    });
+  },
+
   enroll: async (tenantId, automationId, options = {}) => {
     const tenant = await tenantRepository.findById(tenantId);
     if (!tenant) throw new NotFoundError('Tenant');
