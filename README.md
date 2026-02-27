@@ -334,6 +334,7 @@ Los errores se manejan automáticamente por el middleware de errores y se format
 - **Módulo de Ejemplo**: `src/modules/example/` - Ejemplo completo de CRUD
 - **Documentación Swagger**: http://localhost:3000/api/v1/docs (en desarrollo)
 - **Health Checks**: Endpoints para monitoreo y health checks
+- **Payment Channels**: [docs/PAYMENT_CHANNELS.md](docs/PAYMENT_CHANNELS.md) - Canales de pago, referencia para conciliación y flujo completo
 
 ## 📄 Licencia
 

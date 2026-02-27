@@ -102,6 +102,20 @@ export const propertyManagersController = {
     }
   },
 
+  updateCapabilities: async (req, res, next) => {
+    try {
+      const { tenantId, connectionId } = req.params;
+      const data = await propertyManagersService.updateCapabilities(
+        tenantId,
+        connectionId,
+        req.body.capabilities
+      );
+      res.ok(sanitizeConnection(data), 'Capabilities updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
   delete: async (req, res, next) => {
     try {
       const { tenantId, connectionId } = req.params;

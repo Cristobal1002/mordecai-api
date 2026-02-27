@@ -16,6 +16,7 @@ export const createChannelValidator = [
   body('label').trim().notEmpty().withMessage('label is required').isLength({ max: 120 }),
   body('requiresReconciliation').optional().isBoolean(),
   body('instructionsTemplate').optional().trim(),
+  body('config').optional().isObject().withMessage('config must be an object'),
   body('sortOrder').optional().isInt({ min: 0 }),
   body('isActive').optional().isBoolean(),
 ];
@@ -27,6 +28,7 @@ export const updateChannelValidator = [
   body('label').optional().trim().notEmpty().isLength({ max: 120 }),
   body('requiresReconciliation').optional().isBoolean(),
   body('instructionsTemplate').optional().trim(),
+  body('config').optional().isObject().withMessage('config must be an object'),
   body('sortOrder').optional().isInt({ min: 0 }),
   body('isActive').optional().isBoolean(),
 ];

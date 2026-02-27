@@ -23,6 +23,7 @@ import catalogRoutes from '../modules/catalog/catalog.routes.js';
 import elevenRoutes from '../modules/elevenlabs/eleven.routes.js';
 import demoRoutes from '../modules/demo/demo.routes.js';
 import payRoutes from '../modules/pay/pay.routes.js';
+import backofficeRoutes from '../modules/backoffice/backoffice.routes.js';
 
 import { config } from '../config/index.js';
 
@@ -54,6 +55,9 @@ const routes = (app) => {
   router.use('/demo', demoRoutes);
 
   app.use(`/api/${config.app.apiVersion}`, router);
+
+  // Backoffice (no auth) - internal/admin catalog management
+  app.use(`/api/${config.app.apiVersion}/backoffice`, backofficeRoutes);
 
   // Public payment link routes (no auth) — /pay/:token
   app.use('/pay', payRoutes);

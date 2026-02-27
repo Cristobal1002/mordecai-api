@@ -6,6 +6,7 @@ import {
   createPropertyManagerValidator,
   updateCredentialsValidator,
   updateStatusValidator,
+  updateCapabilitiesValidator,
   testConnectionValidator,
   testCredentialsValidator,
   triggerSyncValidator,
@@ -128,6 +129,15 @@ router.patch(
   updateStatusValidator,
   validateRequest,
   propertyManagersController.updateStatus
+);
+
+// PATCH /api/v1/tenants/:tenantId/pms-connections/:connectionId/capabilities
+router.patch(
+  '/:tenantId/pms-connections/:connectionId/capabilities',
+  requireAuth(),
+  updateCapabilitiesValidator,
+  validateRequest,
+  propertyManagersController.updateCapabilities
 );
 
 // DELETE /api/v1/tenants/:tenantId/pms-connections/:connectionId

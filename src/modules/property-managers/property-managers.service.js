@@ -187,6 +187,21 @@ export const propertyManagersService = {
   },
 
   /**
+   * Update connection capabilities (merge with existing).
+   * Used to set payment.allowed and payment.link when PMS supports payments (e.g. Rentvine).
+   */
+  updateCapabilities: async (tenantId, connectionId, capabilities) => {
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+    const current = connection.capabilities ?? {};
+    const merged = { ...current, ...capabilities };
+    if (capabilities.payment) {
+      merged.payment = { ...(current.payment ?? {}), ...capabilities.payment };
+    }
+    await connection.update({ capabilities: merged });
+    return connection.reload();
+  },
+
+  /**
    * Delete a PMS connection. Removes the record from the database.
    */
   delete: async (tenantId, connectionId) => {

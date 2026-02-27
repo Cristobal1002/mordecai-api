@@ -1,11 +1,18 @@
-import { TenantPaymentChannel } from '../../models/index.js';
+import { TenantPaymentChannel, PaymentChannelType } from '../../models/index.js';
 import { logger } from '../../utils/logger.js';
+
+const includeChannelType = {
+  model: PaymentChannelType,
+  as: 'channelType',
+  attributes: ['id', 'code', 'label', 'requiresReconciliation', 'sortOrder', 'configSchema'],
+};
 
 export const paymentChannelRepository = {
   findByTenant: async (tenantId, options = {}) => {
     try {
       return await TenantPaymentChannel.findAll({
         where: { tenantId, isActive: true },
+        include: [includeChannelType],
         order: [
           ['sortOrder', 'ASC'],
           ['label', 'ASC'],
@@ -22,6 +29,7 @@ export const paymentChannelRepository = {
     try {
       return await TenantPaymentChannel.findAll({
         where: { tenantId },
+        include: [includeChannelType],
         order: [
           ['sortOrder', 'ASC'],
           ['label', 'ASC'],
@@ -38,6 +46,7 @@ export const paymentChannelRepository = {
     try {
       return await TenantPaymentChannel.findOne({
         where: { id, tenantId },
+        include: [includeChannelType],
         ...options,
       });
     } catch (error) {

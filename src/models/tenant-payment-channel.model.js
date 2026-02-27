@@ -9,10 +9,12 @@ export class TenantPaymentChannel extends Model {
       {
         id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
         tenantId: { type: DataTypes.UUID, allowNull: false, field: 'tenant_id', references: { model: 'tenants', key: 'id' } },
+        channelTypeId: { type: DataTypes.UUID, allowNull: true, field: 'channel_type_id', references: { model: 'payment_channel_types', key: 'id' } },
         code: { type: DataTypes.STRING(40), allowNull: false },
         label: { type: DataTypes.STRING(120), allowNull: false },
         requiresReconciliation: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'requires_reconciliation' },
         instructionsTemplate: { type: DataTypes.TEXT, field: 'instructions_template' },
+        config: { type: DataTypes.JSONB, defaultValue: {}, field: 'config' },
         sortOrder: { type: DataTypes.INTEGER, defaultValue: 0, field: 'sort_order' },
         isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
         createdAt: { type: DataTypes.DATE, field: 'created_at' },

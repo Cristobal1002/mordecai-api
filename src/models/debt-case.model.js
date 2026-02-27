@@ -100,6 +100,12 @@ export class DebtCase extends Model {
           type: DataTypes.JSONB,
           defaultValue: {},
         },
+        casePublicId: {
+          type: DataTypes.STRING(16),
+          allowNull: true,
+          unique: true,
+          field: 'case_public_id',
+        },
         closedAt: {
           type: DataTypes.DATE,
           allowNull: true,

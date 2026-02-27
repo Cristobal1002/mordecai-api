@@ -38,6 +38,15 @@ export const updateStatusValidator = [
     .withMessage('status must be draft, connected, syncing, error, or disabled'),
 ];
 
+export const updateCapabilitiesValidator = [
+  tenantIdParam,
+  connectionIdParam,
+  body('capabilities').isObject().withMessage('capabilities must be an object'),
+  body('capabilities.payment').optional().isObject().withMessage('capabilities.payment must be an object'),
+  body('capabilities.payment.allowed').optional().isBoolean().withMessage('capabilities.payment.allowed must be boolean'),
+  body('capabilities.payment.link').optional().isString().trim().isLength({ max: 512 }).withMessage('capabilities.payment.link must be at most 512 characters'),
+];
+
 export const testConnectionValidator = [tenantIdParam, connectionIdParam];
 
 export const testCredentialsValidator = [

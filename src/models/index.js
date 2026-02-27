@@ -34,6 +34,7 @@ import { CaseAutomationState } from './case-automation-state.model.js';
 import { CollectionEvent } from './collection-event.model.js';
 import { TenantMessageTemplate } from './tenant-message-template.model.js';
 import { TenantMessageAttachment } from './tenant-message-attachment.model.js';
+import { PaymentChannelType } from './payment-channel-type.model.js';
 import { TenantPaymentChannel } from './tenant-payment-channel.model.js';
 import { TenantBranding } from './tenant-branding.model.js';
 import { PaymentLink } from './payment-link.model.js';
@@ -72,6 +73,7 @@ export const initModels = (sequelize) => {
   CollectionEvent.initModel(sequelize);
   TenantMessageTemplate.initModel(sequelize);
   TenantMessageAttachment.initModel(sequelize);
+  PaymentChannelType.initModel(sequelize);
   TenantPaymentChannel.initModel(sequelize);
   TenantBranding.initModel(sequelize);
   PaymentLink.initModel(sequelize);
@@ -232,7 +234,9 @@ export const initModels = (sequelize) => {
 
   TenantMessageTemplate.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   TenantMessageAttachment.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  PaymentChannelType.hasMany(TenantPaymentChannel, { foreignKey: 'channel_type_id', as: 'tenantChannels' });
   TenantPaymentChannel.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+  TenantPaymentChannel.belongsTo(PaymentChannelType, { foreignKey: 'channel_type_id', as: 'channelType' });
   TenantBranding.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   PaymentLink.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   PaymentLink.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
@@ -272,6 +276,7 @@ export {
   CollectionEvent,
   TenantMessageTemplate,
   TenantMessageAttachment,
+  PaymentChannelType,
   TenantPaymentChannel,
   TenantBranding,
   PaymentLink,

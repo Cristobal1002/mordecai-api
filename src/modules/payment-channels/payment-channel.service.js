@@ -1,28 +1,45 @@
 import { paymentChannelRepository } from './payment-channel.repository.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
-import { NotFoundError, ConflictError } from '../../errors/index.js';
-
-const DEFAULT_CHANNELS = [
-  { code: 'link', label: 'Payment link', requiresReconciliation: false, sortOrder: 0 },
-  { code: 'card', label: 'Debit/credit card', requiresReconciliation: false, sortOrder: 1 },
-  { code: 'transfer', label: 'Bank transfer', requiresReconciliation: true, sortOrder: 2 },
-  { code: 'zelle', label: 'Zelle', requiresReconciliation: true, sortOrder: 3 },
-  { code: 'cash', label: 'Cash (physical point)', requiresReconciliation: true, sortOrder: 4 },
-];
+import { paymentChannelTypeRepository } from '../backoffice/payment-channel-types/payment-channel-type.repository.js';
+import { validateConfigAgainstSchema } from './config-validator.js';
+import { NotFoundError, ConflictError, BadRequestError } from '../../errors/index.js';
 
 export const paymentChannelService = {
   list: async (tenantId, includeInactive = false) => {
     const tenant = await tenantRepository.findById(tenantId);
     if (!tenant) throw new NotFoundError('Tenant');
 
-    const channels = includeInactive
-      ? await paymentChannelRepository.findAllByTenant(tenantId)
-      : await paymentChannelRepository.findByTenant(tenantId);
+    const [channels, channelTypes] = await Promise.all([
+      includeInactive
+        ? paymentChannelRepository.findAllByTenant(tenantId)
+        : paymentChannelRepository.findByTenant(tenantId),
+      paymentChannelTypeRepository.findAll({ where: { isEnabled: true } }),
+    ]);
 
-    if (channels.length === 0) {
-      return DEFAULT_CHANNELS.map((c) => ({ ...c, id: null, tenantId, isSystemDefault: true }));
+    const byCode = new Map();
+    for (const ch of channels) {
+      const plain = ch.get ? ch.get({ plain: true }) : ch;
+      byCode.set(plain.code, {
+        ...plain,
+        configSchema: plain.channelType?.configSchema ?? { fields: [] },
+      });
     }
-    return channels;
+
+    return channelTypes.map((ct) => {
+      const existing = byCode.get(ct.code);
+      if (existing) return existing;
+      return {
+        id: null,
+        tenantId,
+        code: ct.code,
+        label: ct.label,
+        requiresReconciliation: ct.requiresReconciliation,
+        sortOrder: ct.sortOrder,
+        config: {},
+        configSchema: ct.configSchema ?? { fields: [] },
+        isSystemDefault: true,
+      };
+    });
   },
 
   getById: async (tenantId, channelId) => {
@@ -31,27 +48,96 @@ export const paymentChannelService = {
 
     const channel = await paymentChannelRepository.findById(channelId, tenantId);
     if (!channel) throw new NotFoundError('Payment channel');
-    return channel;
+    const plain = channel.get ? channel.get({ plain: true }) : channel;
+    return {
+      ...plain,
+      configSchema: plain.channelType?.configSchema ?? { fields: [] },
+    };
   },
 
   create: async (tenantId, data) => {
     const tenant = await tenantRepository.findById(tenantId);
     if (!tenant) throw new NotFoundError('Tenant');
 
-    const existing = await paymentChannelRepository.findByCode(tenantId, data.code);
-    if (existing) {
-      throw new ConflictError(`Payment channel with code "${data.code}" already exists`);
+    let channelTypeId = data.channelTypeId;
+    let code = data.code;
+    let label = data.label;
+    let requiresReconciliation = data.requiresReconciliation;
+    let sortOrder = data.sortOrder;
+
+    if (channelTypeId || code) {
+      const ct = channelTypeId
+        ? await paymentChannelTypeRepository.findById(channelTypeId)
+        : await paymentChannelTypeRepository.findByCode(code);
+      if (ct) {
+        channelTypeId = ct.id;
+        code = ct.code;
+        label = label ?? ct.label;
+        requiresReconciliation = requiresReconciliation ?? ct.requiresReconciliation;
+        sortOrder = sortOrder ?? ct.sortOrder;
+      }
     }
 
-    return await paymentChannelRepository.create({
+    if (!code) throw new ConflictError('code or channelTypeId is required');
+
+    const existing = await paymentChannelRepository.findByCode(tenantId, code);
+    if (existing) {
+      throw new ConflictError(`Payment channel with code "${code}" already exists`);
+    }
+
+    const ctForSchema = channelTypeId
+      ? await paymentChannelTypeRepository.findById(channelTypeId)
+      : await paymentChannelTypeRepository.findByCode(code);
+    const schema = ctForSchema?.configSchema ?? { fields: [] };
+    if (data.config !== undefined) {
+      const { valid, errors } = validateConfigAgainstSchema(data.config, schema);
+      if (!valid) throw new BadRequestError(errors.join('; '));
+    }
+    if (code === 'transfer' && data.isActive !== false) {
+      const banks = data.config?.banks;
+      if (!Array.isArray(banks) || banks.length < 1) {
+        throw new BadRequestError('Bank transfer channel requires at least one bank account when active');
+      }
+    }
+    if (code === 'zelle' && data.isActive !== false) {
+      const recipients = data.config?.recipients;
+      if (!Array.isArray(recipients) || recipients.length < 1) {
+        throw new BadRequestError('Zelle channel requires at least one recipient when active');
+      }
+    }
+    if (code === 'cash' && data.isActive !== false) {
+      const locations = data.config?.locations ?? data.config?.points;
+      if (!Array.isArray(locations) || locations.length < 1) {
+        throw new BadRequestError('Cash payment channel requires at least one location when active');
+      }
+    }
+    if (code === 'check' && data.isActive !== false) {
+      if (!data.config?.payeeName?.trim()) {
+        throw new BadRequestError('Check channel requires payee name when active');
+      }
+      const methods = data.config?.deliveryMethods;
+      if (!Array.isArray(methods) || methods.length < 1) {
+        throw new BadRequestError('Check channel requires at least one delivery method when active');
+      }
+    }
+
+    const created = await paymentChannelRepository.create({
       tenantId,
-      code: data.code,
-      label: data.label,
-      requiresReconciliation: data.requiresReconciliation ?? false,
+      channelTypeId: channelTypeId ?? null,
+      code,
+      label: label ?? code,
+      requiresReconciliation: requiresReconciliation ?? false,
       instructionsTemplate: data.instructionsTemplate ?? null,
-      sortOrder: data.sortOrder ?? 0,
+      config: data.config ?? {},
+      sortOrder: sortOrder ?? 0,
       isActive: data.isActive !== false,
     });
+    const channel = await paymentChannelRepository.findById(created.id, tenantId);
+    const plain = channel.get ? channel.get({ plain: true }) : channel;
+    return {
+      ...plain,
+      configSchema: plain.channelType?.configSchema ?? { fields: [] },
+    };
   },
 
   update: async (tenantId, channelId, data) => {
@@ -65,16 +151,61 @@ export const paymentChannelService = {
       }
     }
 
+    if (data.config !== undefined) {
+      const schema = existing.channelType?.configSchema ?? { fields: [] };
+      const { valid, errors } = validateConfigAgainstSchema(data.config, schema);
+      if (!valid) {
+        throw new BadRequestError(errors.join('; '));
+      }
+    }
+    // Backend rule: if channel is active, require minimal config
+    const willBeActive = data.isActive !== undefined ? data.isActive : existing.isActive;
+    const code = data.code ?? existing.code;
+    const config = data.config !== undefined ? data.config : existing.config;
+    if (willBeActive && code === 'transfer') {
+      const banks = config?.banks;
+      if (!Array.isArray(banks) || banks.length < 1) {
+        throw new BadRequestError('Bank transfer channel requires at least one bank account when active');
+      }
+    }
+    if (willBeActive && code === 'zelle') {
+      const recipients = config?.recipients;
+      if (!Array.isArray(recipients) || recipients.length < 1) {
+        throw new BadRequestError('Zelle channel requires at least one recipient when active');
+      }
+    }
+    if (willBeActive && code === 'cash') {
+      const locations = config?.locations ?? config?.points;
+      if (!Array.isArray(locations) || locations.length < 1) {
+        throw new BadRequestError('Cash payment channel requires at least one location when active');
+      }
+    }
+    if (willBeActive && code === 'check') {
+      if (!config?.payeeName?.trim()) {
+        throw new BadRequestError('Check channel requires payee name when active');
+      }
+      const methods = config?.deliveryMethods;
+      if (!Array.isArray(methods) || methods.length < 1) {
+        throw new BadRequestError('Check channel requires at least one delivery method when active');
+      }
+    }
+
     const payload = {};
     if (data.code !== undefined) payload.code = data.code;
     if (data.label !== undefined) payload.label = data.label;
     if (data.requiresReconciliation !== undefined) payload.requiresReconciliation = data.requiresReconciliation;
     if (data.instructionsTemplate !== undefined) payload.instructionsTemplate = data.instructionsTemplate;
+    if (data.config !== undefined) payload.config = data.config;
     if (data.sortOrder !== undefined) payload.sortOrder = data.sortOrder;
     if (data.isActive !== undefined) payload.isActive = data.isActive;
 
     await paymentChannelRepository.update(channelId, tenantId, payload);
-    return await paymentChannelRepository.findById(channelId, tenantId);
+    const channel = await paymentChannelRepository.findById(channelId, tenantId);
+    const plain = channel.get ? channel.get({ plain: true }) : channel;
+    return {
+      ...plain,
+      configSchema: plain.channelType?.configSchema ?? { fields: [] },
+    };
   },
 
   delete: async (tenantId, channelId) => {
@@ -92,17 +223,25 @@ export const paymentChannelService = {
     const existing = await paymentChannelRepository.findByTenant(tenantId);
     if (existing.length > 0) return existing;
 
+    const channelTypes = await paymentChannelTypeRepository.findAll({ where: { isEnabled: true } });
     const created = [];
-    for (const ch of DEFAULT_CHANNELS) {
+    for (const ct of channelTypes) {
       const c = await paymentChannelRepository.create({
         tenantId,
-        code: ch.code,
-        label: ch.label,
-        requiresReconciliation: ch.requiresReconciliation,
-        sortOrder: ch.sortOrder,
+        channelTypeId: ct.id,
+        code: ct.code,
+        label: ct.label,
+        requiresReconciliation: ct.requiresReconciliation,
+        config: {},
+        sortOrder: ct.sortOrder,
         isActive: true,
       });
-      created.push(c);
+      const channel = await paymentChannelRepository.findById(c.id, tenantId);
+      const plain = channel.get ? channel.get({ plain: true }) : channel;
+      created.push({
+        ...plain,
+        configSchema: plain.channelType?.configSchema ?? { fields: [] },
+      });
     }
     return created;
   },

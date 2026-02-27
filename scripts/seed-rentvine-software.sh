@@ -22,6 +22,10 @@ curl -s -X POST "${API}/catalog/softwares" \
     "docsUrl": "https://docs.rentvine.com/"
   },
   "capabilities": {
+    "payment": {
+      "allowed": true,
+      "link": "https://account.rentvine.com/auth/login?access_type=account&redirect_uri=%2Fauth%2Fselect"
+    },
     "supportsExportLeases": true,
     "supportsExportProperties": true,
     "supportsExportUnits": true,

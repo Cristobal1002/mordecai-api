@@ -68,8 +68,22 @@ export const loadDatabase = async () => {
         }
       }
 
-      await sequelize.sync(syncOptions);
-      logger.info({ syncMode: mode }, 'Database sync: models synchronized successfully');
+      try {
+        await sequelize.sync(syncOptions);
+        logger.info({ syncMode: mode }, 'Database sync: models synchronized successfully');
+      } catch (syncError) {
+        // Cuando sync alter intenta añadir columnas que ya existen (ej. por migraciones), ignorar
+        const msg = syncError?.message || '';
+        const code = syncError?.parent?.code || syncError?.original?.code;
+        if (code === '42701' && msg.includes('already exists')) {
+          logger.warn(
+            { syncMode: mode, message: msg },
+            'Database sync: column already exists (likely from migrations). Skipping alter.'
+          );
+        } else {
+          throw syncError;
+        }
+      }
     } else {
       logger.info('Database sync disabled (use migrations for schema changes)');
     }

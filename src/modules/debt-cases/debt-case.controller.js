@@ -22,5 +22,15 @@ export const debtCaseController = {
         } catch (error) {
             next(error);
         }
+    },
+
+    getPaymentInstructions: async (req, res, next) => {
+        try {
+            const { caseId } = req.params;
+            const result = await debtCaseService.getPaymentInstructions(req, caseId);
+            res.ok(result, 'Payment instructions retrieved successfully');
+        } catch (error) {
+            next(error);
+        }
     }
 };

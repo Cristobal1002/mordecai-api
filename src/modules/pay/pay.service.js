@@ -12,6 +12,7 @@ import { resolveLogoUrl } from '../../utils/s3-upload.js';
 import { signPaySession, verifyPaySession } from './pay-jwt.js';
 import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
 import { logger } from '../../utils/logger.js';
+import { buildPaymentInstructions } from './payment-instructions.service.js';
 
 const normalizeForVerify = (s) =>
   String(s ?? '')
@@ -157,7 +158,7 @@ export const payService = {
         {
           model: DebtCase,
           as: 'debtCase',
-          attributes: ['id', 'amountDueCents', 'currency', 'daysPastDue', 'dueDate', 'meta'],
+          attributes: ['id', 'casePublicId', 'amountDueCents', 'currency', 'daysPastDue', 'dueDate', 'meta'],
           include: [
             { model: Debtor, as: 'debtor', attributes: ['id', 'fullName', 'email', 'phone'] },
           ],
@@ -181,6 +182,14 @@ export const payService = {
     const debtor = dc?.debtor;
     const agreement = link.paymentAgreement;
 
+    const paymentInstructions = await buildPaymentInstructions({
+      tenantId: link.tenantId,
+      debtCaseId: dc?.id,
+      casePublicId: dc?.casePublicId ?? null,
+      debtorId: debtor?.id,
+      pmsLeaseId: dc?.meta?.pms_lease_id ?? dc?.meta?.pmsLeaseId ?? null,
+    });
+
     const payload = {
       residentName: debtor?.fullName ?? null,
       amountDueCents: dc?.amountDueCents ?? 0,
@@ -199,6 +208,7 @@ export const payService = {
             type: agreement.type,
           }
         : null,
+      paymentInstructions,
     };
 
     return { status: 200, payload };
