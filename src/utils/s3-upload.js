@@ -4,9 +4,9 @@ import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const getS3Client = () => {
-  const region = process.env.AWS_REGION || 'us-east-1';
-  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const region = (process.env.AWS_REGION || 'us-east-1').trim();
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY?.trim();
   const config = { region };
   if (accessKeyId && secretAccessKey) {
     config.credentials = { accessKeyId, secretAccessKey };
@@ -15,7 +15,7 @@ const getS3Client = () => {
 };
 
 const getBucketName = () => {
-  const bucket = process.env.S3_BUCKET_NAME;
+  const bucket = process.env.S3_BUCKET_NAME?.trim();
   if (!bucket) throw new Error('S3_BUCKET_NAME is required for uploads');
   return bucket;
 };

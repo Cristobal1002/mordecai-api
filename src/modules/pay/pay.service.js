@@ -6,6 +6,8 @@ import {
   DebtCase,
   Debtor,
   PaymentAgreement,
+  PmsLease,
+  PmsUnit,
 } from '../../models/index.js';
 import { resolveBranding } from '../../config/branding-defaults.js';
 import { resolveLogoUrl } from '../../utils/s3-upload.js';
@@ -112,11 +114,21 @@ export const payService = {
       debtor.metadata?.last_name ??
       debtor.metadata?.lastName ??
       getLastWord(debtor.fullName);
-    const storedUnit =
+
+    let storedUnit =
       link.debtCase?.meta?.unit_number ??
       link.debtCase?.meta?.unitNumber ??
       debtor.metadata?.unit ??
       '';
+    if (!storedUnit) {
+      const pmsLeaseId = link.debtCase?.meta?.pms_lease_id ?? link.debtCase?.meta?.pmsLeaseId;
+      if (pmsLeaseId) {
+        const lease = await PmsLease.findByPk(pmsLeaseId, {
+          include: [{ model: PmsUnit, as: 'pmsUnit', attributes: ['unitNumber'] }],
+        });
+        storedUnit = lease?.pmsUnit?.unitNumber ?? '';
+      }
+    }
 
     const inputLast = normalizeForVerify(lastName);
     const inputUnit = normalizeForVerify(unitNumber);
@@ -167,7 +179,7 @@ export const payService = {
           model: PaymentAgreement,
           as: 'paymentAgreement',
           required: false,
-          attributes: ['id', 'amountCents', 'installments', 'firstPaymentCents', 'status'],
+          attributes: ['id', 'totalAmountCents', 'downPaymentCents', 'installments', 'status', 'type'],
         },
       ],
     });
