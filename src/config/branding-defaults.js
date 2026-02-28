@@ -9,7 +9,11 @@ export const MORDECAI_DEFAULT_BRANDING = {
   secondaryColor: '#F3F4F6',
   supportEmail: null,
   supportPhone: null,
+  supportHours: null,
   footerText: null,
+  showPoweredBy: true,
+  legalDisclaimerOverride: null,
+  otpDeliveryLabelOverride: null,
 };
 
 /**
@@ -34,6 +38,10 @@ export function resolveBranding(tenantBranding, tenant = null) {
     secondaryColor: plain.secondaryColor || MORDECAI_DEFAULT_BRANDING.secondaryColor,
     supportEmail: plain.supportEmail ?? MORDECAI_DEFAULT_BRANDING.supportEmail,
     supportPhone: plain.supportPhone ?? MORDECAI_DEFAULT_BRANDING.supportPhone,
+    supportHours: plain.supportHours ?? MORDECAI_DEFAULT_BRANDING.supportHours,
     footerText: plain.footerText ?? MORDECAI_DEFAULT_BRANDING.footerText,
+    showPoweredBy: plain.showPoweredBy ?? MORDECAI_DEFAULT_BRANDING.showPoweredBy,
+    legalDisclaimerOverride: plain.legalDisclaimerOverride ?? MORDECAI_DEFAULT_BRANDING.legalDisclaimerOverride,
+    otpDeliveryLabelOverride: plain.otpDeliveryLabelOverride ?? MORDECAI_DEFAULT_BRANDING.otpDeliveryLabelOverride,
   };
 }

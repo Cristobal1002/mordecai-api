@@ -274,12 +274,15 @@ export const automationService = {
         const dc = plain.debtCase || {};
         const debtor = dc.debtor || {};
         const meta = dc.meta || {};
+        const pmsLease = dc.pmsLease || {};
+        const leaseNumber =
+          meta.lease_number ?? meta.leaseNumber ?? pmsLease.leaseNumber ?? null;
         return {
           id: plain.id,
           debtCaseId: plain.debtCaseId,
           debtorName: debtor.fullName,
           debtorEmail: debtor.email,
-          leaseNumber: meta.lease_number ?? null,
+          leaseNumber,
           amountDueCents: dc.amountDueCents,
           daysPastDue: dc.daysPastDue,
           reason: plain.reason,
@@ -306,6 +309,9 @@ export const automationService = {
       const debtCase = plain.debtCase || {};
       const debtor = debtCase.debtor || {};
       const meta = debtCase.meta || {};
+      const pmsLease = debtCase.pmsLease || {};
+      const leaseNumber =
+        meta.lease_number ?? meta.leaseNumber ?? pmsLease.leaseNumber ?? null;
       return {
         id: plain.id,
         debtCaseId: plain.debtCaseId,
@@ -315,7 +321,7 @@ export const automationService = {
         amountDueCents: debtCase.amountDueCents,
         daysPastDue: debtCase.daysPastDue,
         currency: debtCase.currency,
-        leaseNumber: meta.lease_number ?? null,
+        leaseNumber,
         pmsLeaseId: debtCase.pmsLeaseId ?? debtCase.pms_lease_id ?? null,
         approvalStatus: debtCase.approvalStatus ?? debtCase.approval_status,
         currentStage: plain.currentStage ? { id: plain.currentStage.id, name: plain.currentStage.name } : null,

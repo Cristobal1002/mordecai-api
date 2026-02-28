@@ -11,8 +11,10 @@ import {
 } from '../../models/index.js';
 import { resolveBranding } from '../../config/branding-defaults.js';
 import { resolveLogoUrl } from '../../utils/s3-upload.js';
+import { maskEmail } from '../../utils/mask-email.js';
 import { signPaySession, verifyPaySession } from './pay-jwt.js';
 import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
+import { sendOtpEmail } from '../../services/email.service.js';
 import { logger } from '../../utils/logger.js';
 import { buildPaymentInstructions } from './payment-instructions.service.js';
 
@@ -34,7 +36,10 @@ export const payService = {
   getByToken: async (token, req) => {
     const link = await PaymentLink.findOne({
       where: { token },
-      include: [{ model: Tenant, as: 'tenant', attributes: ['id', 'name'] }],
+      include: [
+        { model: Tenant, as: 'tenant', attributes: ['id', 'name'] },
+        { model: DebtCase, as: 'debtCase', include: [{ model: Debtor, as: 'debtor', attributes: ['email', 'phone'] }] },
+      ],
     });
 
     if (!link) return { status: 404 };
@@ -58,11 +63,18 @@ export const payService = {
     const tenant = link.tenant || (await Tenant.findByPk(link.tenantId, { attributes: ['id', 'name'] }));
     const resolved = resolveBranding(branding, tenant);
     const logoUrl = resolved.logoUrl ? await resolveLogoUrl(resolved.logoUrl) : null;
+    const debtorEmail = link.debtCase?.debtor?.email;
+    const maskedEmailVal = debtorEmail ? maskEmail(debtorEmail) : null;
+    const hasEmail = Boolean(debtorEmail?.trim());
+    const hasPhone = Boolean(link.debtCase?.debtor?.phone?.trim());
 
     return {
       status: 200,
       payload: {
         status: link.status,
+        maskedEmail: maskedEmailVal,
+        hasEmail,
+        hasPhone,
         branding: {
           companyName: resolved.companyName,
           logoUrl,
@@ -70,7 +82,11 @@ export const payService = {
           secondaryColor: resolved.secondaryColor,
           supportEmail: resolved.supportEmail,
           supportPhone: resolved.supportPhone,
+          supportHours: resolved.supportHours,
           footerText: resolved.footerText,
+          showPoweredBy: resolved.showPoweredBy,
+          legalDisclaimerOverride: resolved.legalDisclaimerOverride,
+          otpDeliveryLabelOverride: resolved.otpDeliveryLabelOverride,
         },
       },
     };
@@ -227,13 +243,14 @@ export const payService = {
   },
 
   /**
-   * POST /pay/:token/otp/send — Send OTP to debtor's phone. Fallback when lease data verify fails.
+   * POST /pay/:token/otp/send — Send OTP to debtor's email (preferred) or phone. Identity verification.
    */
   sendOtp: async (token) => {
     const link = await PaymentLink.findOne({
       where: { token },
       include: [
         { model: DebtCase, as: 'debtCase', include: [{ model: Debtor, as: 'debtor' }] },
+        { model: Tenant, as: 'tenant', attributes: ['id', 'name'] },
       ],
     });
 
@@ -250,8 +267,9 @@ export const payService = {
     }
 
     const debtor = link.debtCase?.debtor;
-    const phone = debtor?.phone;
-    if (!phone) return { status: 400, message: 'No phone number on file for this account' };
+    const email = debtor?.email?.trim();
+    const phone = debtor?.phone?.trim();
+    if (!email && !phone) return { status: 400, message: 'No email or phone on file for this account' };
 
     const maxOtpAttempts = 5;
     if (link.otpAttempts >= maxOtpAttempts) {
@@ -259,28 +277,62 @@ export const payService = {
       return { status: 429, message: 'Too many OTP attempts' };
     }
 
+    const branding = await TenantBranding.findOne({ where: { tenantId: link.tenantId } });
+    const tenant = link.tenant || (await Tenant.findByPk(link.tenantId, { attributes: ['id', 'name'] }));
+    const resolved = resolveBranding(branding, tenant);
+    const companyName = resolved.companyName || 'Mordecai';
+
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const hash = crypto.createHash('sha256').update(code).digest('hex');
     const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+    let sendTo = null;
+    let maskedDestination = null;
 
-    try {
-      await sendTwilioSms({
-        to: phone,
-        body: `Your verification code is: ${code}. It expires in 15 minutes.`,
-      });
-    } catch (err) {
-      logger.warn({ err, token }, 'Pay OTP send failed');
-      return { status: 503, message: 'Failed to send verification code' };
+    if (email) {
+      try {
+        await sendOtpEmail(email, code, companyName);
+        sendTo = email;
+        maskedDestination = maskEmail(email);
+      } catch (err) {
+        logger.warn({ err, token }, 'Pay OTP email send failed, trying SMS fallback');
+        if (phone) {
+          try {
+            await sendTwilioSms({
+              to: phone,
+              body: `Your verification code is: ${code}. It expires in 15 minutes.`,
+            });
+            sendTo = phone;
+            maskedDestination = 'your phone';
+          } catch (smsErr) {
+            logger.warn({ err: smsErr, token }, 'Pay OTP SMS fallback failed');
+            return { status: 503, message: 'Failed to send verification code' };
+          }
+        } else {
+          return { status: 503, message: 'Failed to send verification code' };
+        }
+      }
+    } else {
+      try {
+        await sendTwilioSms({
+          to: phone,
+          body: `Your verification code is: ${code}. It expires in 15 minutes.`,
+        });
+        sendTo = phone;
+        maskedDestination = 'your phone';
+      } catch (err) {
+        logger.warn({ err, token }, 'Pay OTP send failed');
+        return { status: 503, message: 'Failed to send verification code' };
+      }
     }
 
     await link.update({
       otpCodeHash: hash,
       otpExpiresAt,
-      otpSentTo: phone,
+      otpSentTo: sendTo,
       otpAttempts: (link.otpAttempts || 0) + 1,
     });
 
-    return { status: 200, payload: { sent: true, expiresIn: 900 } };
+    return { status: 200, payload: { sent: true, expiresIn: 900, maskedDestination } };
   },
 
   /**
