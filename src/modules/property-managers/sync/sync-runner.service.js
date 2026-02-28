@@ -688,6 +688,8 @@ export async function runSync(connectionId, options = {}) {
       ...prevState,
       lastAttemptAt: now,
       lastSuccessfulRunAt: now,
+      lastRunStatus: 'SUCCESS',
+      lastErrorMessage: null,
       ...(dataNorm.stats?.cursors && {
         debtorsSince: dataNorm.stats.cursors.debtorsSince ?? prevState.debtorsSince,
         leasesSince: dataNorm.stats.cursors.leasesSince ?? prevState.leasesSince,
@@ -716,7 +718,12 @@ export async function runSync(connectionId, options = {}) {
     );
     const now = new Date();
     const prevState = connection?.syncState ?? {};
-    const syncState = { ...prevState, lastAttemptAt: now };
+    const syncState = {
+      ...prevState,
+      lastAttemptAt: now,
+      lastRunStatus: 'FAILED',
+      lastErrorMessage: err?.message || 'Sync failed',
+    };
 
     try {
       await PmsConnection.update(

@@ -176,6 +176,24 @@ router.post(
   propertyManagersController.triggerSync
 );
 
+// POST /api/v1/tenants/:tenantId/pms-connections/:connectionId/sync-full-flow
+router.post(
+  '/:tenantId/pms-connections/:connectionId/sync-full-flow',
+  requireAuth(),
+  getPropertyManagerValidator,
+  validateRequest,
+  propertyManagersController.syncFullFlow
+);
+
+// POST /api/v1/tenants/:tenantId/pms-connections/:connectionId/refresh-cases
+router.post(
+  '/:tenantId/pms-connections/:connectionId/refresh-cases',
+  requireAuth(),
+  getPropertyManagerValidator,
+  validateRequest,
+  propertyManagersController.refreshCasesFromPms
+);
+
 // POST /api/v1/tenants/:tenantId/pms-connections/:connectionId/build-cases
 router.post(
   '/:tenantId/pms-connections/:connectionId/build-cases',

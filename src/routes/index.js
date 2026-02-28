@@ -9,6 +9,7 @@ import templateRoutes from '../modules/templates/template.routes.js';
 import paymentChannelRoutes from '../modules/payment-channels/payment-channel.routes.js';
 import automationRoutes from '../modules/automations/automation.routes.js';
 import caseRoutes from '../modules/cases/case.routes.js';
+import disputeRoutes from '../modules/disputes/dispute.routes.js';
 import propertyManagersRoutes from '../modules/property-managers/property-managers.routes.js';
 import dashboardRoutes from '../modules/dashboard/dashboard.routes.js';
 import importRoutes from '../modules/imports/import.routes.js';
@@ -45,6 +46,7 @@ const routes = (app) => {
   router.use('/tenants', paymentChannelRoutes);
   router.use('/tenants', automationRoutes);
   router.use('/tenants', caseRoutes);
+  router.use('/tenants', disputeRoutes);
   router.use('/tenants', propertyManagersRoutes);
   router.use('/tenants', dashboardRoutes);
   router.use('/import-batches', importRoutes);

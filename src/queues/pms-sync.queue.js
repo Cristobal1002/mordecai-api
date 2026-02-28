@@ -19,6 +19,11 @@ function getConnection() {
   return connection;
 }
 
+/** Get Redis connection for pms-sync (lock, etc). Returns null if REDIS_URL not set. */
+export function getPmsSyncRedis() {
+  return getConnection();
+}
+
 /**
  * Get the PMS sync queue (lazy init). Returns null if REDIS_URL is not set.
  */
@@ -55,17 +60,52 @@ export async function addPmsSyncJob(connectionId, tenantId, options = {}) {
 }
 
 /**
- * Enqueue a build-cases job (debt cases from PMS balances). Returns job id or null if queue not available.
+ * Enqueue a build-new-cases job (INSERT only, idempotent). Returns job id or null if queue not available.
  */
-export async function addBuildCasesJob(connectionId, tenantId) {
+export async function addBuildNewCasesJob(connectionId, tenantId) {
   const q = getPmsSyncQueue();
   if (!q) return null;
   const job = await q.add(
-    'build-cases',
+    'build-new-cases',
     { connectionId, tenantId },
     { attempts: 2, backoff: { type: 'exponential', delay: 5000 } }
   );
-  logger.info({ connectionId, tenantId, jobId: job.id }, 'Build cases job enqueued');
+  logger.info({ connectionId, tenantId, jobId: job.id }, 'Build new cases job enqueued');
+  return job.id;
+}
+
+/**
+ * Enqueue a refresh-cases job (UPDATE only financial fields). Returns job id or null if queue not available.
+ */
+export async function addRefreshCasesJob(connectionId, tenantId) {
+  const q = getPmsSyncQueue();
+  if (!q) return null;
+  const job = await q.add(
+    'refresh-cases',
+    { connectionId, tenantId },
+    { attempts: 2, backoff: { type: 'exponential', delay: 5000 } }
+  );
+  logger.info({ connectionId, tenantId, jobId: job.id }, 'Refresh cases job enqueued');
+  return job.id;
+}
+
+/** @deprecated Use addBuildNewCasesJob. Kept for backward compat. */
+export async function addBuildCasesJob(connectionId, tenantId) {
+  return addBuildNewCasesJob(connectionId, tenantId);
+}
+
+/**
+ * Enqueue sync-full-flow job: sync (raw) -> refresh -> build-new -> recompute. Single job runs all in sequence.
+ */
+export async function addSyncFullFlowJob(connectionId, tenantId) {
+  const q = getPmsSyncQueue();
+  if (!q) return null;
+  const job = await q.add(
+    'sync-full-flow',
+    { connectionId, tenantId },
+    { attempts: 1, timeout: 600_000 } // 10 min - full flow can be long
+  );
+  logger.info({ connectionId, tenantId, jobId: job.id }, 'Sync full flow job enqueued');
   return job.id;
 }
 

@@ -256,7 +256,27 @@ export const propertyManagersController = {
     try {
       const { tenantId, connectionId } = req.params;
       const result = await propertyManagersService.enqueueBuildCasesFromPms(tenantId, connectionId);
-      res.ok(result, 'Build cases job enqueued. The worker will process it shortly.');
+      res.ok(result, 'Build new cases job enqueued.');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  refreshCasesFromPms: async (req, res, next) => {
+    try {
+      const { tenantId, connectionId } = req.params;
+      const result = await propertyManagersService.enqueueRefreshCasesFromPms(tenantId, connectionId);
+      res.ok(result, 'Refresh cases job enqueued.');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  syncFullFlow: async (req, res, next) => {
+    try {
+      const { tenantId, connectionId } = req.params;
+      const result = await propertyManagersService.enqueueSyncFullFlow(tenantId, connectionId);
+      res.ok(result, 'Sync full flow job enqueued (sync + refresh + build + recompute).');
     } catch (error) {
       next(error);
     }
@@ -266,7 +286,7 @@ export const propertyManagersController = {
     try {
       const { tenantId, connectionId } = req.params;
       const jobId = String(req.query.jobId || '').trim();
-      const status = await propertyManagersService.getBuildCasesJobStatus(tenantId, connectionId, jobId);
+      const status = await propertyManagersService.getPmsJobStatus(tenantId, connectionId, jobId);
       if (!status) {
         return res.notFound('Job not found or does not belong to this connection');
       }

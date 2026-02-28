@@ -48,6 +48,15 @@ export class DebtCase extends Model {
             key: 'id',
           },
         },
+        pmsLeaseId: {
+          type: DataTypes.UUID,
+          allowNull: true,
+          field: 'pms_lease_id',
+          references: {
+            model: 'pms_leases',
+            key: 'id',
+          },
+        },
         amountDueCents: {
           type: DataTypes.BIGINT,
           allowNull: false,
@@ -111,6 +120,21 @@ export class DebtCase extends Model {
           allowNull: true,
           field: 'closed_at',
         },
+        approvalStatus: {
+          type: DataTypes.STRING(32),
+          defaultValue: 'APPROVED',
+          field: 'approval_status',
+        },
+        externalKey: {
+          type: DataTypes.STRING(512),
+          allowNull: true,
+          field: 'external_key',
+        },
+        lastPmsSyncAt: {
+          type: DataTypes.DATE,
+          allowNull: true,
+          field: 'last_pms_sync_at',
+        },
         createdAt: {
           type: DataTypes.DATE,
           field: 'created_at',
@@ -138,6 +162,14 @@ export class DebtCase extends Model {
           },
           {
             fields: ['tenant_id', 'debtor_id'],
+          },
+          {
+            fields: ['pms_lease_id'],
+          },
+          {
+            unique: true,
+            fields: ['tenant_id', 'external_key'],
+            name: 'idx_debt_cases_tenant_external_key',
           },
         ],
       }

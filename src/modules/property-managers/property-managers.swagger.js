@@ -272,6 +272,98 @@
 
 /**
  * @swagger
+ * /tenants/{tenantId}/pms-connections/{connectionId}/sync-full-flow:
+ *   post:
+ *     summary: Sync completo (raw + refresh + build + recompute)
+ *     description: Ejecuta sync raw, refresh de casos, build de nuevos casos y recompute de automations. Un solo job.
+ *     tags: [PropertyManagers]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: tenantId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: connectionId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Job encolado
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/TriggerSyncResponse' }
+ *       409: { description: 'Sync en progreso' }
+ */
+
+/**
+ * @swagger
+ * /tenants/{tenantId}/pms-connections/{connectionId}/refresh-cases:
+ *   post:
+ *     summary: Refrescar casos existentes
+ *     description: Actualiza amountDueCents, daysPastDue, dueDate. Si balance=0 marca PAID; si pago parcial aplica cooldown.
+ *     tags: [PropertyManagers]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: tenantId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: connectionId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Job encolado
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     enqueued: { type: boolean }
+ *                     jobId: { type: string }
+ */
+
+/**
+ * @swagger
+ * /tenants/{tenantId}/pms-connections/{connectionId}/build-cases:
+ *   post:
+ *     summary: Construir nuevos casos
+ *     description: INSERT únicamente (idempotente vía external_key). No toca casos existentes.
+ *     tags: [PropertyManagers]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: tenantId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: connectionId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Job encolado
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     enqueued: { type: boolean }
+ *                     jobId: { type: string }
+ */
+
+/**
+ * @swagger
  * components:
  *   schemas:
  *     PmsConnection:
@@ -286,6 +378,19 @@
  *         capabilities: { type: object, nullable: true }
  *         lastSyncedAt: { type: string, format: date-time, nullable: true }
  *         lastError: { type: object, nullable: true }
+ *         syncState:
+ *           type: object
+ *           nullable: true
+ *           description: Data freshness metadata
+ *           properties:
+ *             lastSuccessfulRunAt: { type: string, format: date-time, description: "Last raw PMS sync" }
+ *             lastRefreshAt: { type: string, format: date-time, description: "Last refresh of existing cases" }
+ *             lastBuildAt: { type: string, format: date-time, description: "Last build of new cases" }
+ *             lastRecomputeAt: { type: string, format: date-time, description: "Last recompute of automation stages" }
+ *             lastRunStatus: { type: string, enum: [SUCCESS, FAILED, IN_PROGRESS] }
+ *             lastErrorMessage: { type: string, nullable: true }
+ *             lastBuildStats: { type: object }
+ *             lastRefreshStats: { type: object }
  *         createdAt: { type: string, format: date-time }
  *         updatedAt: { type: string, format: date-time }
  *         software:

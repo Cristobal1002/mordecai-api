@@ -1,12 +1,21 @@
 import { Op } from 'sequelize';
-import { CaseAutomationState, PmsConnection, DebtCase } from '../../models/index.js';
+import { CaseAutomationState, PmsConnection, DebtCase, Debtor, CaseDispute, CollectionEvent, CollectionStage } from '../../models/index.js';
 import { automationRepository } from './automation.repository.js';
+import {
+  addCaseActionJob,
+  CASE_ACTION_JOB_TYPES,
+} from '../../queues/case-actions.queue.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { strategyRepository } from '../strategies/strategy.repository.js';
 import { NotFoundError, ConflictError } from '../../errors/index.js';
 import { logger } from '../../utils/logger.js';
+import { resolveApprovalStatus } from '../cases/approval-resolver.service.js';
 
 const ELIGIBLE_STATUSES = ['NEW', 'IN_PROGRESS', 'CONTACTED', 'PROMISE_TO_PAY', 'PAYMENT_PLAN', 'NO_ANSWER', 'REFUSED'];
+
+const CHANNEL_ORDER = ['call', 'sms', 'email', 'whatsapp'];
+const resolveDispatchChannels = (channels = {}) =>
+  CHANNEL_ORDER.filter((channel) => channels[channel] === true);
 
 function selectStageByDaysPastDue(stages, daysPastDue) {
   const active = (stages || []).filter((s) => s.isActive !== false);
@@ -59,6 +68,16 @@ export const automationService = {
     return automation;
   },
 
+  update: async (tenantId, automationId, data) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+    const updates = {};
+    if (data.approvalMode != null) updates.approvalMode = data.approvalMode;
+    if (data.approvalRules != null) updates.approvalRules = data.approvalRules;
+    await automationRepository.update(automationId, tenantId, updates);
+    return automationRepository.findById(automationId, tenantId);
+  },
+
   create: async (tenantId, data) => {
     const tenant = await tenantRepository.findById(tenantId);
     if (!tenant) throw new NotFoundError('Tenant');
@@ -79,8 +98,9 @@ export const automationService = {
       tenantId,
       pmsConnectionId: data.pmsConnectionId,
       strategyId: data.strategyId,
-      status: 'active',
-      startedAt: new Date(),
+      status: 'paused',
+      pausedAt: new Date(),
+      startedAt: null,
       stats: {},
     });
 
@@ -97,11 +117,15 @@ export const automationService = {
   activate: async (tenantId, automationId) => {
     const automation = await automationRepository.findById(automationId, tenantId);
     if (!automation) throw new NotFoundError('Automation');
-    await automationRepository.update(automationId, tenantId, {
+    const updates = {
       status: 'active',
       pausedAt: null,
       nextTickAt: new Date(),
-    });
+    };
+    if (!automation.startedAt) {
+      updates.startedAt = new Date();
+    }
+    await automationRepository.update(automationId, tenantId, updates);
     return await automationRepository.findById(automationId, tenantId);
   },
 
@@ -127,6 +151,53 @@ export const automationService = {
     if (!automation) throw new NotFoundError('Automation');
     await automationRepository.delete(automationId, tenantId);
     return { deleted: true, automationId };
+  },
+
+  getOverview: async (tenantId, automationId) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+
+    const { counts, stages } = await automationRepository.getOverviewData(automationId, tenantId);
+
+    const events = await automationRepository.findEvents(automationId, 20, {
+      include: [
+        {
+          model: DebtCase,
+          as: 'debtCase',
+          required: false,
+          attributes: ['id', 'casePublicId'],
+        },
+      ],
+    });
+
+    const recentActivity = events.map((e) => {
+      const plain = e.get ? e.get({ plain: true }) : e;
+      const debtCase = plain.debtCase || {};
+      return {
+        id: plain.id,
+        type: plain.eventType,
+        at: plain.createdAt,
+        caseId: plain.debtCaseId,
+        casePublicId: debtCase.casePublicId ?? debtCase.case_public_id ?? null,
+        actor: plain.payload?.actor ?? 'system',
+        meta: plain.payload ?? {},
+      };
+    });
+
+    const pms = automation.pmsConnection || {};
+    const software = pms.software || {};
+
+    return {
+      automation: {
+        id: automation.id,
+        name: automation.strategy?.name ?? 'Automation',
+        status: automation.status,
+        source: software.key ?? 'unknown',
+      },
+      counts,
+      stages,
+      recentActivity,
+    };
   },
 
   getSummary: async (tenantId, automationId) => {
@@ -171,20 +242,70 @@ export const automationService = {
     };
   },
 
-  getCases: async (tenantId, automationId, limit = 100, offset = 0) => {
+  getCases: async (tenantId, automationId, limit = 100, offset = 0, tab = null, filters = {}, sortBy = null, sortOrder = 'ASC') => {
     const automation = await automationRepository.findById(automationId, tenantId);
     if (!automation) throw new NotFoundError('Automation');
 
-    const rows = await automationRepository.findCaseStates(automationId, {
+    const useFilters =
+      (filters.status && filters.status.length > 0) ||
+      (filters.stage && filters.stage.length > 0) ||
+      filters.dpdMin != null ||
+      filters.dpdMax != null ||
+      filters.amountMinCents != null ||
+      filters.amountMaxCents != null;
+    if (tab === 'disputes' && !useFilters) {
+      const enrolledIds = await automationRepository.findEnrolledDebtCaseIds(automationId);
+      const rows = await automationRepository.findDisputesByAutomation(automationId, tenantId, {
+        limit: Math.min(limit, 200),
+        offset,
+      });
+      const total =
+        enrolledIds.length === 0
+          ? 0
+          : await CaseDispute.count({
+              where: {
+                tenantId,
+                status: 'OPEN',
+                debtCaseId: { [Op.in]: enrolledIds },
+              },
+            });
+      const data = rows.map((d) => {
+        const plain = d.get ? d.get({ plain: true }) : d;
+        const dc = plain.debtCase || {};
+        const debtor = dc.debtor || {};
+        const meta = dc.meta || {};
+        return {
+          id: plain.id,
+          debtCaseId: plain.debtCaseId,
+          debtorName: debtor.fullName,
+          debtorEmail: debtor.email,
+          leaseNumber: meta.lease_number ?? null,
+          amountDueCents: dc.amountDueCents,
+          daysPastDue: dc.daysPastDue,
+          reason: plain.reason,
+          status: plain.status,
+          openedAt: plain.openedAt,
+        };
+      });
+      return { data, total };
+    }
+
+    const opts = {
       limit: Math.min(limit, 200),
       offset,
-    });
-    const total = await automationRepository.countCaseStates(automationId, { status: 'active' });
+      tab: useFilters ? null : tab || undefined,
+      filters: useFilters ? filters : undefined,
+      sortBy,
+      sortOrder,
+    };
+    const rows = await automationRepository.findCaseStates(automationId, opts);
+    const total = await automationRepository.countCaseStates(automationId, {}, opts);
 
     const data = rows.map((s) => {
       const plain = s.get ? s.get({ plain: true }) : s;
       const debtCase = plain.debtCase || {};
       const debtor = debtCase.debtor || {};
+      const meta = debtCase.meta || {};
       return {
         id: plain.id,
         debtCaseId: plain.debtCaseId,
@@ -194,6 +315,9 @@ export const automationService = {
         amountDueCents: debtCase.amountDueCents,
         daysPastDue: debtCase.daysPastDue,
         currency: debtCase.currency,
+        leaseNumber: meta.lease_number ?? null,
+        pmsLeaseId: debtCase.pmsLeaseId ?? debtCase.pms_lease_id ?? null,
+        approvalStatus: debtCase.approvalStatus ?? debtCase.approval_status,
         currentStage: plain.currentStage ? { id: plain.currentStage.id, name: plain.currentStage.name } : null,
         nextActionAt: plain.nextActionAt,
         lastAttemptAt: plain.lastAttemptAt,
@@ -205,6 +329,119 @@ export const automationService = {
     });
 
     return { data, total };
+  },
+
+  bulkApprove: async (tenantId, automationId, caseIds) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+    const enrolled = await automationRepository.findEnrolledDebtCaseIds(automationId);
+    const valid = caseIds.filter((id) => enrolled.includes(id));
+    const [count] = await DebtCase.update(
+      { approvalStatus: 'APPROVED' },
+      { where: { id: { [Op.in]: valid }, tenantId } }
+    );
+    return { approved: count };
+  },
+
+  bulkReject: async (tenantId, automationId, caseIds) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+    const enrolled = await automationRepository.findEnrolledDebtCaseIds(automationId);
+    const valid = caseIds.filter((id) => enrolled.includes(id));
+    const [count] = await DebtCase.update(
+      { approvalStatus: 'REJECTED' },
+      { where: { id: { [Op.in]: valid }, tenantId } }
+    );
+    await CaseAutomationState.update(
+      { status: 'closed' },
+      { where: { debtCaseId: { [Op.in]: valid }, automationId } }
+    );
+    return { rejected: count };
+  },
+
+  bulkExclude: async (tenantId, automationId, caseIds) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+    const enrolled = await automationRepository.findEnrolledDebtCaseIds(automationId);
+    const valid = caseIds.filter((id) => enrolled.includes(id));
+    const [count] = await DebtCase.update(
+      { approvalStatus: 'EXCLUDED' },
+      { where: { id: { [Op.in]: valid }, tenantId } }
+    );
+    await CaseAutomationState.update(
+      { status: 'closed' },
+      { where: { debtCaseId: { [Op.in]: valid }, automationId } }
+    );
+    return { excluded: count };
+  },
+
+  /**
+   * Bulk action by filters (approve or exclude). Reuses same filter format as getCases.
+   * Creates CollectionEvent for each affected case.
+   */
+  bulkByFilters: async (tenantId, automationId, action, filters = {}, options = {}) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+
+    const useFilters =
+      (filters.status && filters.status.length > 0) ||
+      (filters.stage && filters.stage.length > 0) ||
+      filters.dpdMin != null ||
+      filters.dpdMax != null ||
+      filters.amountMinCents != null ||
+      filters.amountMaxCents != null;
+
+    const tab = useFilters ? null : action === 'approve' ? 'pending' : 'active';
+    const opts = { limit: 5000, offset: 0, tab: useFilters ? null : tab, filters: useFilters ? filters : undefined };
+    const rows = await automationRepository.findCaseStates(automationId, opts);
+    const caseIds = rows.map((r) => r.debtCaseId ?? r.debt_case_id).filter(Boolean);
+
+    if (caseIds.length === 0) return { affected: 0 };
+
+    const actorId = options.actorId ?? null;
+    const reason = options.reason ?? null;
+
+    if (action === 'approve') {
+      const enrolled = await automationRepository.findEnrolledDebtCaseIds(automationId);
+      const valid = caseIds.filter((id) => enrolled.includes(id));
+      const [count] = await DebtCase.update(
+        { approvalStatus: 'APPROVED' },
+        { where: { id: { [Op.in]: valid }, tenantId } }
+      );
+      for (const caseId of valid) {
+        await CollectionEvent.create({
+          automationId,
+          debtCaseId: caseId,
+          eventType: 'case_approved',
+          payload: { actor: actorId ? 'user' : 'system', actorId, bulk: true },
+        });
+      }
+      return { affected: count };
+    }
+
+    if (action === 'exclude') {
+      const enrolled = await automationRepository.findEnrolledDebtCaseIds(automationId);
+      const valid = caseIds.filter((id) => enrolled.includes(id));
+      const [count] = await DebtCase.update(
+        { approvalStatus: 'EXCLUDED' },
+        { where: { id: { [Op.in]: valid }, tenantId } }
+      );
+      await CaseAutomationState.update(
+        { status: 'closed' },
+        { where: { debtCaseId: { [Op.in]: valid }, automationId } }
+      );
+      for (const caseId of valid) {
+        await CollectionEvent.create({
+          automationId,
+          debtCaseId: caseId,
+          eventType: 'case_excluded',
+          payload: { actor: actorId ? 'user' : 'system', actorId, reason: reason ?? undefined, bulk: true },
+        });
+      }
+      return { affected: count };
+    }
+
+    throw new ConflictError(`Unknown bulk action: ${action}`);
   },
 
   getActivity: async (tenantId, automationId, limit = 50) => {
@@ -271,7 +508,9 @@ export const automationService = {
     let debtCases;
     if (options.debtCaseIds && options.debtCaseIds.length > 0) {
       debtCases = await DebtCase.findAll({
-        where: { id: { [Op.in]: options.debtCaseIds }, tenantId }, limit: 500,
+        where: { id: { [Op.in]: options.debtCaseIds }, tenantId },
+        include: [{ model: Debtor, as: 'debtor', attributes: ['id', 'phone', 'email'] }],
+        limit: 500,
       });
     } else {
       const alreadyEnrolled = await automationRepository.findEnrolledDebtCaseIds(automationId);
@@ -281,6 +520,7 @@ export const automationService = {
           status: { [Op.in]: ELIGIBLE_STATUSES },
           ...(alreadyEnrolled.length > 0 ? { id: { [Op.notIn]: alreadyEnrolled } } : {}),
         },
+        include: [{ model: Debtor, as: 'debtor', attributes: ['id', 'phone', 'email'] }],
         limit: 1000,
       });
     }
@@ -299,6 +539,11 @@ export const automationService = {
         }
         const stage = selectStageByDaysPastDue(stages, dc.daysPastDue ?? 0);
         if (!stage) continue;
+
+        const approvalStatus = resolveApprovalStatus(dc, automation, stage, dc.debtor);
+        if (dc.approvalStatus !== approvalStatus) {
+          await dc.update({ approvalStatus });
+        }
 
         await CaseAutomationState.create({
           debtCaseId: dc.id,
@@ -344,5 +589,129 @@ export const automationService = {
       }
     }
     return { updated };
+  },
+
+  /**
+   * Run the full strategy (call, SMS, email per current stage) for a single case on-demand.
+   * Enqueues jobs for each enabled channel.
+   */
+  runStrategyForCase: async (tenantId, automationId, debtCaseId) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+
+    const state = await CaseAutomationState.findOne({
+      where: { debtCaseId, automationId },
+      include: [
+        { model: DebtCase, as: 'debtCase', required: true, include: [{ model: Debtor, as: 'debtor', required: false }] },
+        { model: CollectionStage, as: 'currentStage', required: false },
+      ],
+    });
+
+    if (!state) throw new NotFoundError('Case is not enrolled in this automation');
+
+    const approvalStatus = state.debtCase?.approvalStatus ?? state.debtCase?.approval_status;
+    if (approvalStatus !== 'APPROVED') {
+      throw new ConflictError('Case must be approved before running strategy');
+    }
+
+    const openDispute = await CaseDispute.findOne({
+      where: { debtCaseId, status: 'OPEN' },
+    });
+    if (openDispute) {
+      throw new ConflictError('Case has an open dispute; resolve it before running strategy');
+    }
+
+    const stage = state.currentStage || null;
+    const dispatchChannels = resolveDispatchChannels(stage?.channels || {});
+
+    if (dispatchChannels.length === 0) {
+      return {
+        message: 'No channel enabled in current stage',
+        queued: [],
+      };
+    }
+
+    const now = new Date();
+    const outcomes = [];
+
+    for (const channel of dispatchChannels) {
+      if (channel === 'call') {
+        const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.CALL_CASE, {
+          tenantId: automation.tenantId,
+          caseId: state.debtCaseId,
+          automationId: automation.id,
+          stateId: state.id,
+        });
+        if (jobId) {
+          outcomes.push('call_queued');
+          await CollectionEvent.create({
+            automationId,
+            debtCaseId: state.debtCaseId,
+            channel: 'call',
+            eventType: 'call_queued',
+            payload: { jobId },
+          });
+        } else {
+          outcomes.push('call_dispatch_queue_unavailable');
+        }
+        continue;
+      }
+      if (channel === 'sms') {
+        const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.SMS_CASE, {
+          tenantId: automation.tenantId,
+          caseId: state.debtCaseId,
+          automationId: automation.id,
+          stateId: state.id,
+        });
+        if (jobId) {
+          outcomes.push('sms_queued');
+          await CollectionEvent.create({
+            automationId,
+            debtCaseId: state.debtCaseId,
+            channel: 'sms',
+            eventType: 'sms_queued',
+            payload: { jobId },
+          });
+        } else {
+          outcomes.push('sms_dispatch_queue_unavailable');
+        }
+        continue;
+      }
+      if (channel === 'email') {
+        const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.EMAIL_CASE, {
+          tenantId: automation.tenantId,
+          caseId: state.debtCaseId,
+          automationId: automation.id,
+          stateId: state.id,
+        });
+        if (jobId) {
+          outcomes.push('email_queued');
+          await CollectionEvent.create({
+            automationId,
+            debtCaseId: state.debtCaseId,
+            channel: 'email',
+            eventType: 'email_queued',
+            payload: { jobId },
+          });
+        } else {
+          outcomes.push('email_dispatch_queue_unavailable');
+        }
+        continue;
+      }
+    }
+
+    const outcome = outcomes.length > 0 ? outcomes.join(',') : 'dispatch_skipped_no_channel';
+    await state.update({
+      lastAttemptAt: now,
+      nextActionAt: now,
+      attemptsWeekCount: (state.attemptsWeekCount ?? 0) + 1,
+      lastOutcome: outcome,
+      lastOutcomeAt: now,
+    });
+
+    return {
+      message: `Strategy executed: ${outcomes.filter((o) => o.endsWith('_queued')).length} channel(s) queued`,
+      queued: outcomes.filter((o) => o.endsWith('_queued')),
+    };
   },
 };

@@ -3,6 +3,7 @@ import { automationController } from './automation.controller.js';
 import {
   listAutomationsValidator,
   getAutomationValidator,
+  updateAutomationValidator,
   createAutomationValidator,
   activateAutomationValidator,
   pauseAutomationValidator,
@@ -13,6 +14,10 @@ import {
   getActivityValidator,
   enrollAutomationValidator,
   recomputeStagesValidator,
+  runStrategyForCaseValidator,
+  bulkCasesValidator,
+  getOverviewValidator,
+  bulkByFiltersValidator,
 } from './automation.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 
@@ -26,6 +31,14 @@ router.post('/:tenantId/automations', createAutomationValidator, validateRequest
 
 // GET /api/v1/tenants/:tenantId/automations/:automationId
 router.get('/:tenantId/automations/:automationId', getAutomationValidator, validateRequest, automationController.getById);
+
+// PATCH /api/v1/tenants/:tenantId/automations/:automationId
+router.patch(
+  '/:tenantId/automations/:automationId',
+  updateAutomationValidator,
+  validateRequest,
+  automationController.update
+);
 
 // POST /api/v1/tenants/:tenantId/automations/:automationId/activate
 router.post(
@@ -67,12 +80,52 @@ router.get(
   automationController.getSummary
 );
 
+// GET /api/v1/tenants/:tenantId/automations/:automationId/overview
+router.get(
+  '/:tenantId/automations/:automationId/overview',
+  getOverviewValidator,
+  validateRequest,
+  automationController.getOverview
+);
+
 // GET /api/v1/tenants/:tenantId/automations/:automationId/cases
 router.get(
   '/:tenantId/automations/:automationId/cases',
   getCasesValidator,
   validateRequest,
   automationController.getCases
+);
+
+// POST /api/v1/tenants/:tenantId/automations/:automationId/cases/bulk-approve
+router.post(
+  '/:tenantId/automations/:automationId/cases/bulk-approve',
+  bulkCasesValidator,
+  validateRequest,
+  automationController.bulkApprove
+);
+
+// POST /api/v1/tenants/:tenantId/automations/:automationId/cases/bulk-reject
+router.post(
+  '/:tenantId/automations/:automationId/cases/bulk-reject',
+  bulkCasesValidator,
+  validateRequest,
+  automationController.bulkReject
+);
+
+// POST /api/v1/tenants/:tenantId/automations/:automationId/cases/bulk-exclude
+router.post(
+  '/:tenantId/automations/:automationId/cases/bulk-exclude',
+  bulkCasesValidator,
+  validateRequest,
+  automationController.bulkExclude
+);
+
+// POST /api/v1/tenants/:tenantId/automations/:automationId/cases/bulk
+router.post(
+  '/:tenantId/automations/:automationId/cases/bulk',
+  bulkByFiltersValidator,
+  validateRequest,
+  automationController.bulkByFilters
 );
 
 // GET /api/v1/tenants/:tenantId/automations/:automationId/activity
@@ -105,6 +158,14 @@ router.post(
   recomputeStagesValidator,
   validateRequest,
   automationController.recomputeStages
+);
+
+// POST /api/v1/tenants/:tenantId/automations/:automationId/cases/:debtCaseId/run-strategy
+router.post(
+  '/:tenantId/automations/:automationId/cases/:debtCaseId/run-strategy',
+  runStrategyForCaseValidator,
+  validateRequest,
+  automationController.runStrategyForCase
 );
 
 export default router;

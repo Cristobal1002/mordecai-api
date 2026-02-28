@@ -1,6 +1,6 @@
 /**
- * Collections Engine v2 - Tick: evaluate active automations, update case states, dispatch channels, create events.
- * Called by a recurring job (e.g. every 15 min).
+ * Collections Engine v2 - Tick: recompute stages, then evaluate active automations, update case states, dispatch channels.
+ * Called by a recurring job (every 15 min).
  */
 import { Op } from 'sequelize';
 import {
@@ -11,7 +11,9 @@ import {
   CollectionEvent,
   DebtCase,
   Debtor,
+  CaseDispute,
 } from '../../models/index.js';
+import { automationService } from '../automations/automation.service.js';
 import { logger } from '../../utils/logger.js';
 import {
   addCaseActionJob,
@@ -47,7 +49,7 @@ const resolveDispatchChannels = (channels = {}) =>
   CHANNEL_ORDER.filter((channel) => channels[channel] === true);
 
 /**
- * Run one tick: process all active automations and their due cases.
+ * Run one tick: recompute stages (DPD changes), then process all active automations and their due cases.
  */
 export async function runCollectionTick() {
   const now = new Date();
@@ -55,6 +57,14 @@ export async function runCollectionTick() {
     where: { status: 'active' },
     include: [{ model: CollectionStrategy, as: 'strategy', required: true }],
   });
+
+  for (const automation of automations) {
+    try {
+      await automationService.recomputeStagesForAutomation(automation.tenantId, automation.id);
+    } catch (err) {
+      logger.warn({ err, automationId: automation.id }, 'Recompute stages failed in tick');
+    }
+  }
 
   let totalProcessed = 0;
   let totalEvents = 0;
@@ -91,8 +101,41 @@ export async function runCollectionTick() {
         limit: 100,
       });
 
+      const debtCaseIds = dueStates.map((s) => s.debtCaseId);
+      const openDisputeCaseIds = new Set(
+        debtCaseIds.length > 0
+          ? (await CaseDispute.findAll({
+              where: { debtCaseId: { [Op.in]: debtCaseIds }, status: 'OPEN' },
+              attributes: ['debtCaseId'],
+              raw: true,
+            })).map((r) => r.debt_case_id)
+          : []
+      );
+
       for (const state of dueStates) {
         if (!isInTimeWindow(now, timeWindow)) continue;
+
+        if ((state.debtCase?.approvalStatus ?? state.debtCase?.approval_status) !== 'APPROVED') {
+          await CollectionEvent.create({
+            automationId: automation.id,
+            debtCaseId: state.debtCaseId,
+            channel: null,
+            eventType: 'dispatch_skipped_approval_pending',
+            payload: { reason: 'Case requires approval before execution' },
+          });
+          continue;
+        }
+
+        if (openDisputeCaseIds.has(state.debtCaseId)) {
+          await CollectionEvent.create({
+            automationId: automation.id,
+            debtCaseId: state.debtCaseId,
+            channel: null,
+            eventType: 'dispatch_skipped_open_dispute',
+            payload: { reason: 'Case has an open dispute' },
+          });
+          continue;
+        }
 
         let attemptsWeekCount = state.attemptsWeekCount ?? 0;
         if (state.lastAttemptAt && now - new Date(state.lastAttemptAt) > WEEK_MS) {

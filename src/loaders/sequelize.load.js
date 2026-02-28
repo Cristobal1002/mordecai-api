@@ -1,7 +1,25 @@
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { sequelize } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
 import { initModels } from '../models/index.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Run 056 migration via Sequelize if case_disputes uses old enum names */
+const runCaseDisputesEnumMigration = async () => {
+  const [rows] = await sequelize.query(
+    `SELECT udt_name FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'case_disputes' AND column_name = 'status'`
+  );
+  if (!rows?.length || rows[0].udt_name !== 'case_dispute_status') return;
+
+  logger.info('Running 056: aligning case_disputes enum names with Sequelize');
+  const sql = readFileSync(join(__dirname, '../../migrations/056_align_case_disputes_enum_names.sql'), 'utf8');
+  await sequelize.query(sql, { raw: true });
+};
 
 export const loadDatabase = async () => {
   // Si la base de datos no está habilitada, salir sin hacer nada
@@ -20,6 +38,10 @@ export const loadDatabase = async () => {
     logger.info('Connecting to PostgreSQL...');
     await sequelize.authenticate();
     logger.info('Database connected');
+
+    if (config.db.sync.mode) {
+      await runCaseDisputesEnumMigration();
+    }
 
     // Inicializa modelos
     initModels(sequelize);

@@ -38,6 +38,7 @@ import { PaymentChannelType } from './payment-channel-type.model.js';
 import { TenantPaymentChannel } from './tenant-payment-channel.model.js';
 import { TenantBranding } from './tenant-branding.model.js';
 import { PaymentLink } from './payment-link.model.js';
+import { CaseDispute } from './case-dispute.model.js';
 
 export const initModels = (sequelize) => {
   // Inicializar modelos
@@ -77,6 +78,7 @@ export const initModels = (sequelize) => {
   TenantPaymentChannel.initModel(sequelize);
   TenantBranding.initModel(sequelize);
   PaymentLink.initModel(sequelize);
+  CaseDispute.initModel(sequelize);
 
   // Definir relaciones
 
@@ -106,6 +108,7 @@ export const initModels = (sequelize) => {
   Tenant.hasMany(TenantPaymentChannel, { foreignKey: 'tenant_id', as: 'paymentChannels' });
   Tenant.hasOne(TenantBranding, { foreignKey: 'tenant_id', as: 'branding' });
   Tenant.hasMany(PaymentLink, { foreignKey: 'tenant_id', as: 'paymentLinks' });
+  Tenant.hasMany(CaseDispute, { foreignKey: 'tenant_id', as: 'caseDisputes' });
 
   // Software hasMany...
   Software.hasMany(SoftwareSetupStep, { foreignKey: 'software_id', as: 'setupSteps' });
@@ -141,6 +144,7 @@ export const initModels = (sequelize) => {
   DebtCase.hasMany(PaymentLink, { foreignKey: 'debt_case_id', as: 'paymentLinks' });
   PaymentAgreement.hasMany(PaymentLink, { foreignKey: 'payment_agreement_id', as: 'paymentLinks' });
   DebtCase.hasMany(InteractionLog, { foreignKey: 'debt_case_id', as: 'interactionLogs' });
+  DebtCase.hasMany(CaseDispute, { foreignKey: 'debt_case_id', as: 'caseDisputes' });
 
   // BelongsTo relationships
   Debtor.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
@@ -150,6 +154,7 @@ export const initModels = (sequelize) => {
   DebtCase.belongsTo(Debtor, { foreignKey: 'debtor_id', as: 'debtor' });
   DebtCase.belongsTo(FlowPolicy, { foreignKey: 'flow_policy_id', as: 'flowPolicy' });
   DebtCase.belongsTo(ImportBatch, { foreignKey: 'import_batch_id', as: 'importBatch' });
+  DebtCase.belongsTo(PmsLease, { foreignKey: 'pms_lease_id', as: 'pmsLease' });
   PaymentAgreement.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   PaymentAgreement.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
   InteractionLog.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
@@ -188,6 +193,7 @@ export const initModels = (sequelize) => {
   PmsLease.hasMany(ArPayment, { foreignKey: 'pms_lease_id', as: 'arPayments' });
   PmsLease.hasMany(ArAdjustment, { foreignKey: 'pms_lease_id', as: 'arAdjustments' });
   PmsLease.hasMany(ArBalance, { foreignKey: 'pms_lease_id', as: 'arBalances' });
+  PmsLease.hasMany(DebtCase, { foreignKey: 'pms_lease_id', as: 'debtCases' });
 
   ExternalMapping.belongsTo(PmsConnection, { foreignKey: 'pms_connection_id', as: 'pmsConnection' });
   PmsProperty.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
@@ -241,6 +247,8 @@ export const initModels = (sequelize) => {
   PaymentLink.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
   PaymentLink.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
   PaymentLink.belongsTo(PaymentAgreement, { foreignKey: 'payment_agreement_id', as: 'paymentAgreement' });
+  CaseDispute.belongsTo(DebtCase, { foreignKey: 'debt_case_id', as: 'debtCase' });
+  CaseDispute.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
 };
 
 export {
@@ -280,5 +288,6 @@ export {
   TenantPaymentChannel,
   TenantBranding,
   PaymentLink,
+  CaseDispute,
 };
 

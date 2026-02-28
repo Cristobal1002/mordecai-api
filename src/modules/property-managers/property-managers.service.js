@@ -21,7 +21,11 @@ import {
 } from '../../models/index.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { getConnector, hasConnector } from './connectors/connector.factory.js';
-import { addPmsSyncJob, addBuildCasesJob } from '../../queues/pms-sync.queue.js';
+import { addPmsSyncJob, addBuildCasesJob, addBuildNewCasesJob, addRefreshCasesJob, addSyncFullFlowJob } from '../../queues/pms-sync.queue.js';
+import { acquireLock } from '../../utils/pms-sync-lock.js';
+import { buildNewCasesFromPms } from './case-build.service.js';
+import { refreshCasesFromPms } from './case-refresh.service.js';
+import { runSync } from './sync/sync-runner.service.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../../errors/index.js';
 import { automationService } from '../automations/automation.service.js';
 import { logger } from '../../utils/logger.js';
@@ -256,6 +260,9 @@ export const propertyManagersService = {
     if (connection.status === 'syncing') {
       throw new ConflictError('A sync is already in progress for this connection');
     }
+    if (!(await acquireLock(tenantId, connectionId))) {
+      throw new ConflictError('A sync is already in progress for this connection');
+    }
     if (!['connected', 'error'].includes(connection.status)) {
       throw new BadRequestError('Connection must be in connected or error state to sync');
     }
@@ -270,7 +277,12 @@ export const propertyManagersService = {
       );
     }
 
-    await connection.update({ status: 'syncing', lastError: null });
+    const prevSyncState = connection.syncState ?? {};
+    await connection.update({
+      status: 'syncing',
+      lastError: null,
+      syncState: { ...prevSyncState, lastRunStatus: 'IN_PROGRESS', lastErrorMessage: null },
+    });
     return {
       enqueued: true,
       jobId,
@@ -286,17 +298,70 @@ export const propertyManagersService = {
    */
   enqueueBuildCasesFromPms: async (tenantId, connectionId) => {
     await ensureTenant(tenantId);
-    await propertyManagersService.getById(tenantId, connectionId);
-    const jobId = await addBuildCasesJob(connectionId, tenantId);
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+    if (!(await acquireLock(tenantId, connectionId))) {
+      throw new ConflictError('A sync or build is already in progress for this connection');
+    }
+    const jobId = await addBuildNewCasesJob(connectionId, tenantId);
     if (jobId == null) {
       throw new BadRequestError(
         'Build cases queue is not available. Set REDIS_URL and ensure the worker is running.'
       );
     }
+    const prevSyncState = connection.syncState ?? {};
+    await connection.update({
+      syncState: { ...prevSyncState, lastRunStatus: 'IN_PROGRESS', lastErrorMessage: null },
+    });
     return { enqueued: true, jobId };
   },
 
-  getBuildCasesJobStatus: async (tenantId, connectionId, jobId) => {
+  enqueueRefreshCasesFromPms: async (tenantId, connectionId) => {
+    await ensureTenant(tenantId);
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+    if (!(await acquireLock(tenantId, connectionId))) {
+      throw new ConflictError('A sync or refresh is already in progress for this connection');
+    }
+    const jobId = await addRefreshCasesJob(connectionId, tenantId);
+    if (jobId == null) {
+      throw new BadRequestError(
+        'Refresh cases queue is not available. Set REDIS_URL and ensure the worker is running.'
+      );
+    }
+    const prevSyncState = connection.syncState ?? {};
+    await connection.update({
+      syncState: { ...prevSyncState, lastRunStatus: 'IN_PROGRESS', lastErrorMessage: null },
+    });
+    return { enqueued: true, jobId };
+  },
+
+  enqueueSyncFullFlow: async (tenantId, connectionId) => {
+    await ensureTenant(tenantId);
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+    if (connection.status === 'syncing') {
+      throw new ConflictError('A sync is already in progress for this connection');
+    }
+    if (!(await acquireLock(tenantId, connectionId))) {
+      throw new ConflictError('A sync is already in progress for this connection');
+    }
+    if (!['connected', 'error'].includes(connection.status)) {
+      throw new BadRequestError('Connection must be in connected or error state');
+    }
+    const jobId = await addSyncFullFlowJob(connectionId, tenantId);
+    if (jobId == null) {
+      throw new BadRequestError(
+        'Sync full flow queue is not available. Set REDIS_URL and ensure the worker is running.'
+      );
+    }
+    const prevSyncState = connection.syncState ?? {};
+    await connection.update({
+      status: 'syncing',
+      lastError: null,
+      syncState: { ...prevSyncState, lastRunStatus: 'IN_PROGRESS', lastErrorMessage: null },
+    });
+    return { enqueued: true, jobId };
+  },
+
+  getPmsJobStatus: async (tenantId, connectionId, jobId) => {
     await ensureTenant(tenantId);
     await propertyManagersService.getById(tenantId, connectionId);
     const { getJobById } = await import('../../queues/pms-sync.queue.js');
@@ -385,13 +450,13 @@ export const propertyManagersService = {
     const debtorCache = new Map();
     const existingCases = await DebtCase.findAll({
       where: { tenantId },
-      attributes: ['id', 'debtorId', 'amountDueCents', 'meta'],
+      attributes: ['id', 'debtorId', 'pmsLeaseId', 'amountDueCents', 'meta'],
     });
     const casesByPmsLeaseId = new Map();
     for (const dc of existingCases) {
-      const meta = dc.meta || {};
-      if (meta.source === 'pms' && meta.pms_connection_id === connectionId && meta.pms_lease_id) {
-        casesByPmsLeaseId.set(meta.pms_lease_id, dc);
+      const leaseId = dc.pmsLeaseId ?? dc.meta?.pms_lease_id;
+      if (leaseId && (dc.meta?.source === 'pms' && dc.meta?.pms_connection_id === connectionId)) {
+        casesByPmsLeaseId.set(String(leaseId), dc);
       }
     }
 
@@ -445,10 +510,12 @@ export const propertyManagersService = {
         property_name: lease.pmsProperty?.name ?? null,
         unit_number: lease.pmsUnit?.unitNumber ?? null,
       };
-      const existing = casesByPmsLeaseId.get(lease.id);
+      const leaseIdStr = String(lease.id);
+      const existing = casesByPmsLeaseId.get(leaseIdStr);
       if (existing) {
         await DebtCase.update(
           {
+            pmsLeaseId: lease.id,
             amountDueCents,
             currency: bal.currency || 'USD',
             daysPastDue,
@@ -463,6 +530,7 @@ export const propertyManagersService = {
         await DebtCase.create({
           tenantId,
           debtorId: debtor.id,
+          pmsLeaseId: lease.id,
           amountDueCents,
           currency: bal.currency || 'USD',
           daysPastDue,
@@ -502,6 +570,77 @@ export const propertyManagersService = {
       updated,
       total: created + updated,
       message: `Built ${created + updated} cases from PMS (${created} new, ${updated} updated).`,
+    };
+  },
+
+  /**
+   * Run full flow: sync (raw) -> refresh cases -> build new cases -> recompute stages.
+   * Called by worker for sync-full-flow job. Does NOT create a job - runs inline.
+   */
+  runSyncFullFlow: async (tenantId, connectionId) => {
+    await ensureTenant(tenantId);
+    const connection = await propertyManagersService.getById(tenantId, connectionId);
+    const software = await Software.findByPk(connection.softwareId);
+    if (!software || !hasConnector(software.key)) {
+      throw new BadRequestError('Connector not available for this connection');
+    }
+
+    const results = { sync: null, refresh: null, build: null, recompute: {} };
+
+    try {
+      results.sync = await runSync(connectionId, { trigger: 'manual' });
+    } catch (err) {
+      logger.error({ err, connectionId }, 'Sync full flow: sync step failed');
+      await connection.update({ status: 'error', lastError: { message: err?.message } });
+      throw err;
+    }
+
+    results.refresh = await refreshCasesFromPms(tenantId, connectionId);
+    results.build = await buildNewCasesFromPms(tenantId, connectionId);
+
+    const now = new Date();
+    const automations = await automationService.list(tenantId, connectionId);
+    for (const a of automations) {
+      if (a.status !== 'active') continue;
+      try {
+        const stageResult = await automationService.recomputeStagesForAutomation(tenantId, a.id);
+        results.recompute[a.id] = stageResult;
+      } catch (err) {
+        logger.warn({ err, automationId: a.id }, 'Recompute stages failed in sync full flow');
+      }
+    }
+
+    const refreshed = await PmsConnection.findByPk(connectionId, { attributes: ['id', 'syncState'] });
+    const prevSyncState = refreshed?.syncState ?? connection.syncState ?? {};
+    await PmsConnection.update(
+      {
+        status: 'connected',
+        lastSyncedAt: now,
+        lastError: null,
+        syncState: {
+          ...prevSyncState,
+          lastSuccessfulRunAt: now,
+          lastRecomputeAt: now.toISOString(),
+          lastRunStatus: 'SUCCESS',
+          lastErrorMessage: null,
+        },
+      },
+      { where: { id: connectionId } }
+    );
+
+    return results;
+  },
+
+  /**
+   * @deprecated Use buildNewCasesFromPms. Kept for any legacy callers.
+   */
+  buildDebtCasesFromPms: async (tenantId, connectionId) => {
+    const buildResult = await buildNewCasesFromPms(tenantId, connectionId);
+    return {
+      created: buildResult.created,
+      updated: 0,
+      total: buildResult.created,
+      message: buildResult.message,
     };
   },
 

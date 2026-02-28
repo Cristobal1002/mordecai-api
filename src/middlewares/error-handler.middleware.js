@@ -39,6 +39,25 @@ export const errorHandler = (err, req, res, _next) => {
     });
   }
 
+  // Redis/Upstash rate limit (queue unavailable or max requests exceeded)
+  const errMsg = String(err?.message ?? '');
+  const isRedisRateLimit =
+    /max requests limit exceeded/i.test(errMsg) ||
+    /upstash.*limit/i.test(errMsg) ||
+    /ERR.*limit/i.test(errMsg);
+  if (isRedisRateLimit) {
+    return res.status(503).json({
+      type: 'https://mordecai.com/errors/queue-unavailable',
+      title: 'Queue service temporarily unavailable',
+      status: 503,
+      details: {
+        message:
+          'The queue service has reached its request limit. Please try again later or upgrade your Redis/Upstash plan.',
+        ...(config.app.nodeEnv === 'development' && { originalError: errMsg }),
+      },
+    });
+  }
+
   // Error no manejado: mensaje genérico al cliente; en desarrollo se incluye el mensaje real (nunca el stack)
   return res.status(500).json({
     type: 'about:blank',

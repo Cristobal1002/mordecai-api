@@ -17,6 +17,8 @@ export class CollectionAutomation extends Model {
         lastEvaluatedAt: { type: DataTypes.DATE, field: 'last_evaluated_at' },
         nextTickAt: { type: DataTypes.DATE, field: 'next_tick_at' },
         stats: { type: DataTypes.JSONB, defaultValue: {}, field: 'stats' },
+        approvalMode: { type: DataTypes.STRING(32), defaultValue: 'AUTO', field: 'approval_mode' },
+        approvalRules: { type: DataTypes.JSONB, defaultValue: {}, field: 'approval_rules' },
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
       },
