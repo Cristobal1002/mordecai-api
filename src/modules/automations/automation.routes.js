@@ -160,12 +160,36 @@ router.post(
   automationController.recomputeStages
 );
 
+// GET /api/v1/tenants/:tenantId/automations/:automationId/cases/:debtCaseId/activity
+router.get(
+  '/:tenantId/automations/:automationId/cases/:debtCaseId/activity',
+  runStrategyForCaseValidator,
+  validateRequest,
+  automationController.getCaseTimeline
+);
+
 // POST /api/v1/tenants/:tenantId/automations/:automationId/cases/:debtCaseId/run-strategy
 router.post(
   '/:tenantId/automations/:automationId/cases/:debtCaseId/run-strategy',
   runStrategyForCaseValidator,
   validateRequest,
   automationController.runStrategyForCase
+);
+
+// POST /api/v1/tenants/:tenantId/automations/:automationId/cases/:debtCaseId/trigger-sms
+router.post(
+  '/:tenantId/automations/:automationId/cases/:debtCaseId/trigger-sms',
+  runStrategyForCaseValidator,
+  validateRequest,
+  automationController.triggerCaseSms
+);
+
+// POST /api/v1/tenants/:tenantId/automations/:automationId/cases/:debtCaseId/trigger-email
+router.post(
+  '/:tenantId/automations/:automationId/cases/:debtCaseId/trigger-email',
+  runStrategyForCaseValidator,
+  validateRequest,
+  automationController.triggerCaseEmail
 );
 
 export default router;

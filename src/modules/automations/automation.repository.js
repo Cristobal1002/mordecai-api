@@ -341,14 +341,112 @@ export const automationRepository = {
 
   findEvents: async (automationId, limit = 50, options = {}) => {
     try {
+      const { dateFrom, dateTo, search, channels, eventTypes, stages } = options;
+      const where = { automationId };
+
+      if (dateFrom || dateTo) {
+        where.createdAt = {};
+        if (dateFrom) where.createdAt[Op.gte] = new Date(dateFrom);
+        if (dateTo) where.createdAt[Op.lte] = new Date(dateTo);
+      }
+      if (channels && channels.length > 0) {
+        where.channel = { [Op.in]: channels.map((c) => String(c).toLowerCase()) };
+      }
+      if (eventTypes && eventTypes.length > 0) {
+        where.eventType = { [Op.in]: eventTypes };
+      }
+
+      if (search && String(search).trim()) {
+        const q = `%${String(search).trim().replace(/%/g, '\\%')}%`;
+        const [byCase, byDebtor, byLease] = await Promise.all([
+          DebtCase.findAll({ where: { casePublicId: { [Op.iLike]: q } }, attributes: ['id'], raw: true }),
+          DebtCase.findAll({
+            include: [{ model: Debtor, as: 'debtor', required: true, where: { [Op.or]: [{ fullName: { [Op.iLike]: q } }, { email: { [Op.iLike]: q } }, { phone: { [Op.iLike]: q } }] }, attributes: [] }],
+            attributes: ['id'],
+            raw: true,
+          }),
+          DebtCase.findAll({
+            include: [{ model: PmsLease, as: 'pmsLease', required: true, where: { leaseNumber: { [Op.iLike]: q } }, attributes: [] }],
+            attributes: ['id'],
+            raw: true,
+          }),
+        ]);
+        const allIds = [...byCase, ...byDebtor, ...byLease].map((r) => r.id).filter(Boolean);
+        const debtCaseIdsFilter = [...new Set(allIds)];
+        if (debtCaseIdsFilter.length === 0) return [];
+        where.debtCaseId = { [Op.in]: debtCaseIdsFilter };
+      }
+
+      if (stages && stages.length > 0) {
+        const auto = await CollectionAutomation.findByPk(automationId, { attributes: ['strategyId'] });
+        if (!auto?.strategyId) return [];
+        const stageRows = await CollectionStage.findAll({
+          where: { strategyId: auto.strategyId, name: { [Op.in]: stages } },
+          attributes: ['id'],
+          raw: true,
+        });
+        const stageIds = stageRows.map((s) => s.id).filter(Boolean);
+        if (stageIds.length === 0) return [];
+        const states = await CaseAutomationState.findAll({
+          where: { automationId, currentStageId: { [Op.in]: stageIds } },
+          attributes: ['debtCaseId'],
+          raw: true,
+        });
+        const caseIdsFromStages = [...new Set(states.map((s) => s.debtCaseId ?? s.debt_case_id).filter(Boolean))];
+        if (caseIdsFromStages.length === 0) return [];
+        if (where.debtCaseId) {
+          const searchIds = where.debtCaseId[Op.in] || [];
+          const intersection = searchIds.filter((id) => caseIdsFromStages.includes(id));
+          where.debtCaseId = intersection.length ? { [Op.in]: intersection } : { [Op.in]: [] };
+        } else {
+          where.debtCaseId = { [Op.in]: caseIdsFromStages };
+        }
+      }
+
+      const debtCaseInclude = {
+        model: DebtCase,
+        as: 'debtCase',
+        required: false,
+        attributes: ['id', 'casePublicId', 'amountDueCents', 'currency', 'daysPastDue', 'meta', 'approvalStatus'],
+        include: [
+          { model: Debtor, as: 'debtor', required: false, attributes: ['id', 'fullName', 'email', 'phone'] },
+          { model: PmsLease, as: 'pmsLease', required: false, attributes: ['id', 'leaseNumber'] },
+        ],
+      };
+
       return await CollectionEvent.findAll({
-        where: { automationId },
+        where,
         order: [['createdAt', 'DESC']],
         limit,
+        include: [debtCaseInclude],
         ...options,
       });
     } catch (error) {
       logger.error({ error, automationId }, 'Error finding automation events');
+      throw error;
+    }
+  },
+
+  findCaseTimeline: async (automationId, debtCaseId) => {
+    try {
+      return await CollectionEvent.findAll({
+        where: { automationId, debtCaseId },
+        order: [['createdAt', 'ASC']],
+        include: [
+          {
+            model: DebtCase,
+            as: 'debtCase',
+            required: false,
+            attributes: ['id', 'casePublicId', 'amountDueCents', 'currency', 'daysPastDue', 'meta', 'approvalStatus'],
+            include: [
+              { model: Debtor, as: 'debtor', required: false, attributes: ['id', 'fullName', 'email', 'phone'] },
+              { model: PmsLease, as: 'pmsLease', required: false, attributes: ['id', 'leaseNumber'] },
+            ],
+          },
+        ],
+      });
+    } catch (error) {
+      logger.error({ error, automationId, debtCaseId }, 'Error finding case timeline');
       throw error;
     }
   },

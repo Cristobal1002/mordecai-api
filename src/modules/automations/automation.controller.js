@@ -184,9 +184,42 @@ export const automationController = {
   getActivity: async (req, res, next) => {
     try {
       const { tenantId, automationId } = req.params;
-      const limit = parseInt(req.query.limit, 10) || 50;
-      const result = await automationService.getActivity(tenantId, automationId, limit);
+      const limit = parseInt(req.query.limit, 10) || 100;
+      let dateFrom = req.query.dateFrom || null;
+      let dateTo = req.query.dateTo || null;
+      if (!dateFrom && !dateTo) {
+        const now = new Date();
+        dateTo = now.toISOString();
+        dateFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      }
+      const search = req.query.search ? String(req.query.search).trim() || null : null;
+      const groupBy = req.query.groupBy === 'case' ? 'case' : 'day';
+      const channels = req.query.channels ? String(req.query.channels).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : undefined;
+      const statuses = req.query.statuses ? String(req.query.statuses).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : undefined;
+      const outcomes = req.query.outcomes ? String(req.query.outcomes).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : undefined;
+      const stages = req.query.stages ? String(req.query.stages).split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+      const result = await automationService.getActivity(tenantId, automationId, {
+        limit,
+        dateFrom,
+        dateTo,
+        search,
+        groupBy,
+        channels,
+        statuses,
+        outcomes,
+        stages,
+      });
       res.ok(result, 'Automation activity retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  getCaseTimeline: async (req, res, next) => {
+    try {
+      const { tenantId, automationId, debtCaseId } = req.params;
+      const result = await automationService.getCaseTimeline(tenantId, automationId, debtCaseId);
+      res.ok(result, 'Case timeline retrieved');
     } catch (error) {
       next(error);
     }
@@ -230,6 +263,26 @@ export const automationController = {
       const { tenantId, automationId, debtCaseId } = req.params;
       const result = await automationService.runStrategyForCase(tenantId, automationId, debtCaseId);
       res.ok(result, result.message || 'Strategy execution enqueued');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  triggerCaseSms: async (req, res, next) => {
+    try {
+      const { tenantId, automationId, debtCaseId } = req.params;
+      const result = await automationService.triggerCaseSms(tenantId, automationId, debtCaseId);
+      res.ok(result, result.message || 'SMS enqueued');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  triggerCaseEmail: async (req, res, next) => {
+    try {
+      const { tenantId, automationId, debtCaseId } = req.params;
+      const result = await automationService.triggerCaseEmail(tenantId, automationId, debtCaseId);
+      res.ok(result, result.message || 'Email enqueued');
     } catch (error) {
       next(error);
     }

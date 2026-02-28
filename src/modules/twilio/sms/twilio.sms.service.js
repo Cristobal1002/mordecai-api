@@ -1,4 +1,4 @@
-import { CollectionEvent, InteractionLog } from '../../../models/index.js';
+import { CollectionEvent, InteractionLog, TenantMessageTemplate } from '../../../models/index.js';
 import { logger } from '../../../utils/logger.js';
 import { buildCollectionSmsBody } from './twilio.sms.template.js';
 import { sendTwilioSms } from './twilio.sms.client.js';
@@ -69,18 +69,29 @@ export const sendCollectionSms = async ({
     };
   }
 
-  // Always ensure a payment link so the debtor can view their account and pay
+  // Always ensure a payment link (with ?source=sms&aid= for click attribution)
   const paymentLink = await getOrCreatePaymentLinkUrl({
     tenantId,
     debtCaseId,
     paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
+    source: 'sms',
+    automationId,
   });
 
-  const customTemplate =
+  // Priority: 1) Stage rules, 2) Tenant SMS template, 3) fallback
+  let customTemplate =
     stage?.rules?.sms_template ||
     stage?.rules?.smsTemplate ||
     stage?.rules?.custom_instructions ||
     null;
+  if (!customTemplate) {
+    const tenantTemplate = await TenantMessageTemplate.findOne({
+      where: { tenantId, channel: ['SMS', 'sms'], isActive: true },
+      order: [['createdAt', 'ASC']],
+      attributes: ['bodyText'],
+    });
+    if (tenantTemplate?.bodyText) customTemplate = tenantTemplate.bodyText;
+  }
   const body = buildCollectionSmsBody({
     debtorName: debtor?.fullName,
     amountDueCents: debtCase?.amountDueCents,

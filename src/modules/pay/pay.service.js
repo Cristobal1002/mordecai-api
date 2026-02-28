@@ -8,6 +8,7 @@ import {
   PaymentAgreement,
   PmsLease,
   PmsUnit,
+  CollectionEvent,
 } from '../../models/index.js';
 import { resolveBranding } from '../../config/branding-defaults.js';
 import { resolveLogoUrl } from '../../utils/s3-upload.js';
@@ -17,6 +18,22 @@ import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
 import { sendOtpEmail } from '../../services/email.service.js';
 import { logger } from '../../utils/logger.js';
 import { buildPaymentInstructions } from './payment-instructions.service.js';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve token (UUID or short_token) to PaymentLink.
+ * Supports both /p/abc12xyz and /p/550e8400-e29b-41d4-a716-446655440000
+ */
+async function resolvePaymentLink(token, options = {}) {
+  if (!token || typeof token !== 'string') return null;
+  const isUuid = UUID_REGEX.test(token.trim());
+  const where = isUuid ? { token: token.trim() } : { shortToken: token.trim() };
+  return PaymentLink.findOne({
+    where,
+    ...options,
+  });
+}
 
 const normalizeForVerify = (s) =>
   String(s ?? '')
@@ -34,8 +51,7 @@ export const payService = {
    * GET /pay/:token — First touch. Registers click, returns branding only.
    */
   getByToken: async (token, req) => {
-    const link = await PaymentLink.findOne({
-      where: { token },
+    const link = await resolvePaymentLink(token, {
       include: [
         { model: Tenant, as: 'tenant', attributes: ['id', 'name'] },
         { model: DebtCase, as: 'debtCase', include: [{ model: Debtor, as: 'debtor', attributes: ['email', 'phone'] }] },
@@ -50,13 +66,38 @@ export const payService = {
       return { status: 410, link };
     }
 
-    // Register first click
+    // Register first click (with channel attribution: ?source=sms | ?source=email, ?aid=automationId)
+    const clickSource = (req.query?.source || req.query?.utm_source || '').toString().toLowerCase().slice(0, 32);
+    const validSource = ['sms', 'email'].includes(clickSource) ? clickSource : null;
+    const aid = (req.query?.aid || '').toString().trim();
+    const automationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(aid) ? aid : null;
+
     if (!link.clickedAt) {
       await link.update({
         clickedAt: new Date(),
+        clickSource: validSource,
         clickIp: req.ip || req.connection?.remoteAddress || null,
         clickUserAgent: req.get('user-agent') || null,
       });
+      // Emit link_clicked for Activity (compliance audit) when we have automation context
+      if (automationId && link.debtCaseId) {
+        try {
+          await CollectionEvent.create({
+            automationId,
+            debtCaseId: link.debtCaseId,
+            channel: validSource || 'link',
+            eventType: 'link_clicked',
+            payload: {
+              paymentLinkId: link.id,
+              source: validSource,
+              ip: req.ip || req.connection?.remoteAddress || null,
+              userAgent: req.get('user-agent') || null,
+            },
+          });
+        } catch (e) {
+          logger.warn({ err: e, debtCaseId: link.debtCaseId, automationId }, 'Failed to emit link_clicked event');
+        }
+      }
     }
 
     const branding = await TenantBranding.findOne({ where: { tenantId: link.tenantId } });
@@ -98,8 +139,7 @@ export const payService = {
    */
   verify: async (token, body) => {
     const { lastName, unitNumber } = body || {};
-    const link = await PaymentLink.findOne({
-      where: { token },
+    const link = await resolvePaymentLink(token, {
       include: [
         { model: DebtCase, as: 'debtCase', include: [{ model: Debtor, as: 'debtor' }] },
       ],
@@ -114,7 +154,8 @@ export const payService = {
     }
     if (link.status === 'VERIFIED') {
       const paySessionToken = signPaySession(link.token);
-      return { status: 200, payload: { verified: true, token: link.token, paySessionToken } };
+      const urlToken = link.shortToken || link.token;
+      return { status: 200, payload: { verified: true, token: urlToken, paySessionToken } };
     }
 
     const maxAttempts = 5;
@@ -164,9 +205,10 @@ export const payService = {
     });
 
     const paySessionToken = signPaySession(link.token);
+    const urlToken = link.shortToken || link.token;
     return {
       status: 200,
-      payload: { verified: true, token: link.token, paySessionToken },
+      payload: { verified: true, token: urlToken, paySessionToken },
     };
   },
 
@@ -176,12 +218,9 @@ export const payService = {
    */
   getDetails: async (token, authHeader) => {
     const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
-    if (!decoded || decoded.payToken !== token) {
-      return { status: 401, message: 'Invalid or expired session' };
-    }
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
 
-    const link = await PaymentLink.findOne({
-      where: { token },
+    const link = await resolvePaymentLink(token, {
       include: [
         {
           model: DebtCase,
@@ -201,6 +240,7 @@ export const payService = {
     });
 
     if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
     if (link.status !== 'VERIFIED' && link.status !== 'PENDING') {
       if (link.status === 'PAID') return { status: 410 };
       if (link.status === 'EXPIRED' || link.status === 'BLOCKED') return { status: 410 };
@@ -246,8 +286,7 @@ export const payService = {
    * POST /pay/:token/otp/send — Send OTP to debtor's email (preferred) or phone. Identity verification.
    */
   sendOtp: async (token) => {
-    const link = await PaymentLink.findOne({
-      where: { token },
+    const link = await resolvePaymentLink(token, {
       include: [
         { model: DebtCase, as: 'debtCase', include: [{ model: Debtor, as: 'debtor' }] },
         { model: Tenant, as: 'tenant', attributes: ['id', 'name'] },
@@ -263,7 +302,8 @@ export const payService = {
     }
     if (link.status === 'VERIFIED') {
       const paySessionToken = signPaySession(link.token);
-      return { status: 200, payload: { verified: true, token: link.token, paySessionToken } };
+      const urlToken = link.shortToken || link.token;
+      return { status: 200, payload: { verified: true, token: urlToken, paySessionToken } };
     }
 
     const debtor = link.debtCase?.debtor;
@@ -340,7 +380,7 @@ export const payService = {
    */
   verifyOtp: async (token, body) => {
     const { code } = body || {};
-    const link = await PaymentLink.findOne({ where: { token } });
+    const link = await resolvePaymentLink(token);
 
     if (!link) return { status: 404 };
     if (link.status === 'BLOCKED') return { status: 423 };
@@ -351,7 +391,8 @@ export const payService = {
     }
     if (link.status === 'VERIFIED') {
       const paySessionToken = signPaySession(link.token);
-      return { status: 200, payload: { verified: true, token: link.token, paySessionToken } };
+      const urlToken = link.shortToken || link.token;
+      return { status: 200, payload: { verified: true, token: urlToken, paySessionToken } };
     }
 
     const maxOtpAttempts = 5;
@@ -382,9 +423,10 @@ export const payService = {
     });
 
     const paySessionToken = signPaySession(link.token);
+    const urlToken = link.shortToken || link.token;
     return {
       status: 200,
-      payload: { verified: true, token: link.token, paySessionToken },
+      payload: { verified: true, token: urlToken, paySessionToken },
     };
   },
 };

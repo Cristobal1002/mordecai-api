@@ -57,7 +57,15 @@ export const bulkCasesValidator = [
 export const getActivityValidator = [
   tenantIdParam,
   automationIdParam,
-  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+  query('limit').optional().isInt({ min: 1, max: 200 }).withMessage('limit must be between 1 and 200'),
+  query('dateFrom').optional().isISO8601().withMessage('dateFrom must be ISO8601 date'),
+  query('dateTo').optional().isISO8601().withMessage('dateTo must be ISO8601 date'),
+  query('search').optional().isString(),
+  query('groupBy').optional().isIn(['day', 'case']).withMessage('groupBy must be day or case'),
+  query('channels').optional().isString(),
+  query('statuses').optional().isString(),
+  query('outcomes').optional().isString(),
+  query('stages').optional().isString(),
 ];
 
 export const enrollAutomationValidator = [

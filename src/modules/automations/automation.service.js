@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { CaseAutomationState, PmsConnection, DebtCase, Debtor, CaseDispute, CollectionEvent, CollectionStage } from '../../models/index.js';
+import { CaseAutomationState, PmsConnection, DebtCase, Debtor, PmsLease, CaseDispute, CollectionEvent, CollectionStage } from '../../models/index.js';
 import { automationRepository } from './automation.repository.js';
 import {
   addCaseActionJob,
@@ -450,22 +450,154 @@ export const automationService = {
     throw new ConflictError(`Unknown bulk action: ${action}`);
   },
 
-  getActivity: async (tenantId, automationId, limit = 50) => {
+  getActivity: async (tenantId, automationId, opts = {}) => {
     const automation = await automationRepository.findById(automationId, tenantId);
     if (!automation) throw new NotFoundError('Automation');
 
-    const events = await automationRepository.findEvents(automationId, Math.min(limit, 100));
-    return events.map((e) => {
+    const limit = Math.min(opts.limit ?? 100, 200);
+    const groupBy = opts.groupBy === 'case' ? 'case' : 'day';
+
+    const statusToEventTypes = {
+      queued: ['call_queued', 'sms_queued', 'email_queued'],
+      sent: ['call_queued', 'sms_sent', 'email_sent'],
+      delivered: ['sms_sent', 'email_sent'],
+      failed: ['call_dispatch_queue_unavailable', 'sms_failed', 'email_failed', 'sms_skipped_invalid_contact', 'email_skipped_invalid_contact'],
+      clicked: ['link_clicked'],
+      opened: [],
+      answered: [],
+      no_answer: [],
+      rejected: [],
+    };
+    const outcomeToEventTypes = {
+      reached: [],
+      promise: [],
+      paid: [],
+      dispute: [],
+      excluded: ['case_excluded'],
+    };
+
+    let eventTypes = null;
+    if (opts.statuses?.length) {
+      const combined = new Set();
+      for (const s of opts.statuses) {
+        (statusToEventTypes[s] || []).forEach((t) => combined.add(t));
+      }
+      if (combined.size) eventTypes = [...combined];
+    }
+    if (opts.outcomes?.length) {
+      const combined = new Set(eventTypes || []);
+      for (const o of opts.outcomes) {
+        (outcomeToEventTypes[o] || []).forEach((t) => combined.add(t));
+      }
+      if (combined.size) eventTypes = [...combined];
+    }
+
+    const repoOpts = {
+      dateFrom: opts.dateFrom,
+      dateTo: opts.dateTo,
+      search: opts.search,
+      channels: opts.channels,
+      eventTypes,
+      stages: opts.stages,
+    };
+
+    const rows = await automationRepository.findEvents(automationId, limit, repoOpts);
+    const events = rows.map((e) => {
       const plain = e.get ? e.get({ plain: true }) : e;
+      const debtCase = plain.debtCase || {};
+      const debtor = debtCase.debtor || {};
+      const pmsLease = debtCase.pmsLease || {};
+      const leaseNumber = pmsLease.leaseNumber ?? debtCase.meta?.lease_number ?? debtCase.meta?.leaseNumber ?? null;
+      const casePublicId = debtCase.casePublicId ?? debtCase.case_public_id ?? null;
       return {
         id: plain.id,
         debtCaseId: plain.debtCaseId,
+        casePublicId,
+        debtorName: debtor.fullName || null,
+        leaseNumber: leaseNumber || null,
+        amountDueCents: debtCase.amountDueCents,
+        currency: debtCase.currency || 'USD',
+        daysPastDue: debtCase.daysPastDue,
         channel: plain.channel,
         eventType: plain.eventType,
         payload: plain.payload,
         createdAt: plain.createdAt,
       };
     });
+
+    if (groupBy === 'case') {
+      const byCase = new Map();
+      for (const ev of events) {
+        const key = ev.debtCaseId || ev.id;
+        if (!byCase.has(key)) {
+          byCase.set(key, { debtCaseId: ev.debtCaseId, casePublicId: ev.casePublicId, debtorName: ev.debtorName, leaseNumber: ev.leaseNumber, amountDueCents: ev.amountDueCents, currency: ev.currency, daysPastDue: ev.daysPastDue, events: [] });
+        }
+        byCase.get(key).events.push(ev);
+      }
+      return { groupBy: 'case', groups: [...byCase.values()].map((g) => ({ ...g, events: g.events.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) })) };
+    }
+
+    const byDay = new Map();
+    const today = new Date().toDateString();
+    const yesterday = new Date(Date.now() - 864e5).toDateString();
+    const formatLabel = (d) => {
+      const s = new Date(d).toDateString();
+      if (s === today) return 'Today';
+      if (s === yesterday) return 'Yesterday';
+      return new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+    for (const ev of events) {
+      const d = ev.createdAt ? new Date(ev.createdAt).toDateString() : '';
+      if (!byDay.has(d)) byDay.set(d, { date: d, label: formatLabel(ev.createdAt), events: [] });
+      byDay.get(d).events.push(ev);
+    }
+    const sortedDays = [...byDay.entries()].sort((a, b) => (b[0] > a[0] ? 1 : -1));
+    return { groupBy: 'day', groups: sortedDays.map(([, g]) => g) };
+  },
+
+  getCaseTimeline: async (tenantId, automationId, debtCaseId) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+
+    const [events, debtCaseRow] = await Promise.all([
+      automationRepository.findCaseTimeline(automationId, debtCaseId),
+      DebtCase.findByPk(debtCaseId, {
+        include: [
+          { model: Debtor, as: 'debtor', attributes: ['id', 'fullName', 'email', 'phone'] },
+          { model: PmsLease, as: 'pmsLease', attributes: ['id', 'leaseNumber'] },
+        ],
+      }),
+    ]);
+
+    const dc = debtCaseRow?.get ? debtCaseRow.get({ plain: true }) : debtCaseRow;
+    const debtor = dc?.debtor || {};
+    const pmsLease = dc?.pmsLease || {};
+    const leaseNumber = pmsLease.leaseNumber ?? dc?.meta?.lease_number ?? dc?.meta?.leaseNumber ?? null;
+
+    return {
+      debtCase: dc
+        ? {
+          id: dc.id,
+          casePublicId: dc.casePublicId ?? dc.case_public_id,
+          amountDueCents: dc.amountDueCents ?? dc.amount_due_cents,
+          currency: dc.currency || 'USD',
+          daysPastDue: dc.daysPastDue ?? dc.days_past_due,
+          approvalStatus: dc.approvalStatus ?? dc.approval_status,
+          debtorName: debtor?.fullName ?? debtor?.full_name,
+          leaseNumber,
+        }
+        : null,
+      events: events.map((e) => {
+        const plain = e.get ? e.get({ plain: true }) : e;
+        return {
+          id: plain.id,
+          channel: plain.channel,
+          eventType: plain.eventType,
+          payload: plain.payload,
+          createdAt: plain.createdAt,
+        };
+      }),
+    };
   },
 
   getAgreements: async (tenantId, automationId) => {
@@ -719,5 +851,89 @@ export const automationService = {
       message: `Strategy executed: ${outcomes.filter((o) => o.endsWith('_queued')).length} channel(s) queued`,
       queued: outcomes.filter((o) => o.endsWith('_queued')),
     };
+  },
+
+  /**
+   * Trigger SMS for a case independently (from Cases tab "Send message" button).
+   */
+  triggerCaseSms: async (tenantId, automationId, debtCaseId) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+
+    const state = await CaseAutomationState.findOne({
+      where: { debtCaseId, automationId },
+      include: [
+        { model: DebtCase, as: 'debtCase', required: true, include: [{ model: Debtor, as: 'debtor', required: false }] },
+        { model: CollectionStage, as: 'currentStage', required: false },
+      ],
+    });
+
+    if (!state) throw new NotFoundError('Case is not enrolled in this automation');
+    if ((state.debtCase?.debtor?.phone || '').trim() === '') {
+      throw new ConflictError('Case has no phone number');
+    }
+
+    const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.SMS_CASE, {
+      tenantId: automation.tenantId,
+      caseId: state.debtCaseId,
+      automationId: automation.id,
+      stateId: state.id,
+    });
+
+    if (!jobId) {
+      throw new ConflictError('SMS queue unavailable. Ensure REDIS_URL is set and worker is running.');
+    }
+
+    await CollectionEvent.create({
+      automationId,
+      debtCaseId: state.debtCaseId,
+      channel: 'sms',
+      eventType: 'sms_queued',
+      payload: { jobId },
+    });
+
+    return { enqueued: true, jobId, message: 'SMS enqueued' };
+  },
+
+  /**
+   * Trigger Email for a case independently (from Cases tab "Email" button).
+   */
+  triggerCaseEmail: async (tenantId, automationId, debtCaseId) => {
+    const automation = await automationRepository.findById(automationId, tenantId);
+    if (!automation) throw new NotFoundError('Automation');
+
+    const state = await CaseAutomationState.findOne({
+      where: { debtCaseId, automationId },
+      include: [
+        { model: DebtCase, as: 'debtCase', required: true, include: [{ model: Debtor, as: 'debtor', required: false }] },
+        { model: CollectionStage, as: 'currentStage', required: false },
+      ],
+    });
+
+    if (!state) throw new NotFoundError('Case is not enrolled in this automation');
+    if ((state.debtCase?.debtor?.email || '').trim() === '') {
+      throw new ConflictError('Case has no email');
+    }
+
+    const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.EMAIL_CASE, {
+      tenantId: automation.tenantId,
+      caseId: state.debtCaseId,
+      automationId: automation.id,
+      stateId: state.id,
+    });
+
+    if (!jobId) {
+      throw new ConflictError('Email queue unavailable. Ensure REDIS_URL is set and worker is running.');
+    }
+
+    await CollectionEvent.create({
+      automationId,
+      debtCaseId: state.debtCaseId,
+      channel: 'email',
+      eventType: 'email_queued',
+      payload: { jobId },
+    });
+
+    return { enqueued: true, jobId, message: 'Email enqueued' };
   },
 };
