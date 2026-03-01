@@ -88,6 +88,8 @@ const DISPUTE_REASON_ALIASES = {
 };
 
 const DISPUTE_REASON_VALUES = new Set(Object.keys(DISPUTE_REASON_ALIASES));
+const UUID_V4_LIKE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const toDateOnly = (value) => {
   if (!value) return null;
@@ -384,8 +386,23 @@ const parseBoolean = (value, defaultValue = false) => {
   return defaultValue;
 };
 
+const normalizeUuid = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  return UUID_V4_LIKE.test(text) ? text : null;
+};
+
 const resolveAutomationIdForCase = async ({ debtCaseId, automationId = null }) => {
-  if (automationId) return automationId;
+  const directAutomationId = normalizeUuid(automationId);
+  if (directAutomationId) return directAutomationId;
+
+  if (automationId && !directAutomationId) {
+    logger.warn(
+      { automationId },
+      'Ignoring non-UUID automation_id from tool payload; falling back to active state'
+    );
+  }
+
   const state = await CaseAutomationState.findOne({
     where: { debtCaseId, status: 'active' },
     order: [['updatedAt', 'DESC']],
