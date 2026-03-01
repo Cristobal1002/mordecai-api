@@ -3,6 +3,7 @@ import { saveElevenPostCallPayload } from '../twilio/twilio.storage.js';
 import { normalizeElevenPostCallPayload } from './eleven.mapper.js';
 import {
   createPaymentAgreementFromTool,
+  createDisputeFromTool,
   syncInteractionFromPostCall,
 } from './eleven.service.js';
 import { verifyElevenLabsWebhook } from './eleven.webhook.js';
@@ -40,6 +41,15 @@ const parseToolPayload = (body) => {
       null,
     proposal,
   };
+};
+
+const verifyToolSecret = (req) => {
+  const expectedToolSecret = process.env.ELEVENLABS_TOOL_SECRET;
+  const providedToolSecret = req.get('x-eleven-tool-secret') || req.get('x-tool-secret');
+  if (expectedToolSecret && expectedToolSecret !== providedToolSecret) {
+    return { ok: false, hasSecret: Boolean(providedToolSecret) };
+  }
+  return { ok: true };
 };
 
 export const elevenController = {
@@ -105,11 +115,10 @@ export const elevenController = {
   },
 
   createPaymentAgreementTool: async (req, res) => {
-    const expectedToolSecret = process.env.ELEVENLABS_TOOL_SECRET;
-    const providedToolSecret = req.get('x-eleven-tool-secret') || req.get('x-tool-secret');
-    if (expectedToolSecret && expectedToolSecret !== providedToolSecret) {
+    const toolSecretValidation = verifyToolSecret(req);
+    if (!toolSecretValidation.ok) {
       logger.warn(
-        { hasSecret: Boolean(providedToolSecret) },
+        { hasSecret: toolSecretValidation.hasSecret },
         'Rejected ElevenLabs create-payment-agreement tool call (invalid secret)'
       );
       return res.status(401).json({
@@ -152,6 +161,57 @@ export const elevenController = {
         caseStatus: result?.case_status || null,
       },
       'Completed ElevenLabs create-payment-agreement tool call'
+    );
+    return res.status(200).json(result);
+  },
+
+  createDisputeTool: async (req, res) => {
+    const toolSecretValidation = verifyToolSecret(req);
+    if (!toolSecretValidation.ok) {
+      logger.warn(
+        { hasSecret: toolSecretValidation.hasSecret },
+        'Rejected ElevenLabs create-dispute tool call (invalid secret)'
+      );
+      return res.status(401).json({
+        ok: false,
+        code: 'INVALID_TOOL_SECRET',
+        message: 'Invalid tool secret.',
+      });
+    }
+
+    const parsedPayload = parseToolPayload(req.body);
+    logger.info(
+      {
+        conversationId: parsedPayload.conversationId,
+        tenantId: parsedPayload.tenantId,
+        caseId: parsedPayload.caseId,
+        interactionId: parsedPayload.interactionId,
+        automationId: parsedPayload.automationId,
+        hasProposal: Boolean(parsedPayload.proposal),
+        reason:
+          parsedPayload.proposal?.reason ||
+          parsedPayload.proposal?.dispute_reason ||
+          null,
+      },
+      'Incoming ElevenLabs create-dispute tool call'
+    );
+
+    if (!parsedPayload.tenantId || !parsedPayload.caseId || !parsedPayload.proposal) {
+      return res.status(400).json({
+        ok: false,
+        code: 'INVALID_PAYLOAD',
+        message: 'Missing tenant_id, case_id or proposal in tool payload.',
+      });
+    }
+
+    const result = await createDisputeFromTool(parsedPayload);
+    logger.info(
+      {
+        ok: result?.ok === true,
+        code: result?.code || null,
+        disputeId: result?.dispute_id || null,
+      },
+      'Completed ElevenLabs create-dispute tool call'
     );
     return res.status(200).json(result);
   },
