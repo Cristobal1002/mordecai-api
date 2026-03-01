@@ -16,6 +16,8 @@ const ELIGIBLE_STATUSES = ['NEW', 'IN_PROGRESS', 'CONTACTED', 'PROMISE_TO_PAY', 
 const CHANNEL_ORDER = ['call', 'sms', 'email', 'whatsapp'];
 const resolveDispatchChannels = (channels = {}) =>
   CHANNEL_ORDER.filter((channel) => channels[channel] === true);
+const isStageChannelEnabled = (state, channel) =>
+  state?.currentStage?.channels?.[channel] === true;
 
 function selectStageByDaysPastDue(stages, daysPastDue) {
   const active = (stages || []).filter((s) => s.isActive !== false);
@@ -324,7 +326,13 @@ export const automationService = {
         leaseNumber,
         pmsLeaseId: debtCase.pmsLeaseId ?? debtCase.pms_lease_id ?? null,
         approvalStatus: debtCase.approvalStatus ?? debtCase.approval_status,
-        currentStage: plain.currentStage ? { id: plain.currentStage.id, name: plain.currentStage.name } : null,
+        currentStage: plain.currentStage
+          ? {
+              id: plain.currentStage.id,
+              name: plain.currentStage.name,
+              channels: plain.currentStage.channels ?? {},
+            }
+          : null,
         nextActionAt: plain.nextActionAt,
         lastAttemptAt: plain.lastAttemptAt,
         lastOutcome: plain.lastOutcome,
@@ -869,6 +877,9 @@ export const automationService = {
     });
 
     if (!state) throw new NotFoundError('Case is not enrolled in this automation');
+    if (!isStageChannelEnabled(state, 'sms')) {
+      throw new ConflictError('SMS is disabled for this case stage');
+    }
     if ((state.debtCase?.debtor?.phone || '').trim() === '') {
       throw new ConflictError('Case has no phone number');
     }
@@ -911,6 +922,9 @@ export const automationService = {
     });
 
     if (!state) throw new NotFoundError('Case is not enrolled in this automation');
+    if (!isStageChannelEnabled(state, 'email')) {
+      throw new ConflictError('Email is disabled for this case stage');
+    }
     if ((state.debtCase?.debtor?.email || '').trim() === '') {
       throw new ConflictError('Case has no email');
     }

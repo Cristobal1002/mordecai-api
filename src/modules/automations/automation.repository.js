@@ -246,7 +246,7 @@ export const automationRepository = {
       const currentStageInclude = {
         model: CollectionStage,
         as: 'currentStage',
-        attributes: ['id', 'name', 'minDaysPastDue', 'maxDaysPastDue'],
+        attributes: ['id', 'name', 'minDaysPastDue', 'maxDaysPastDue', 'channels'],
         required: stageArr && stageArr.length > 0,
         ...(stageArr && stageArr.length > 0 ? { where: { name: { [Op.in]: stageArr } } } : {}),
       };
