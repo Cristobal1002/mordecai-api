@@ -3,8 +3,7 @@
 {% block content %}
 <p style="margin:0 0 12px;color:#f8f9fb;">Hi {{ debtor_name }},</p>
 <p style="margin:0 0 12px;color:#d1d5db;">
-  This is a reminder from Mordecai. Your current balance is
-  <strong style="color:#ffffff;">{{ amount_due }}</strong>.
+  This is a reminder from {{ tenant_name | default("your collections team") }} regarding your account.
 </p>
 <p style="margin:0 0 12px;color:#d1d5db;">
   Days past due: <strong style="color:#ffffff;">{{ days_past_due }}</strong>.

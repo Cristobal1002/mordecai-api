@@ -76,7 +76,8 @@ export const buildCollectionSmsBody = ({
   const linkPart = vars.payment_link
     ? ` View your account and pay here: ${vars.payment_link}`
     : '';
-  const fallback = `Hi ${vars.debtor_name}, this is Mordecai. Your balance ${vars.amount_due} is ${vars.days_past_due} days past due.${linkPart} Reply to discuss payment options.`;
+  const tenantDisplay = vars.tenant_name || 'your collections team';
+  const fallback = `Hi ${vars.debtor_name}, this is ${tenantDisplay} regarding your account.${linkPart} Reply to discuss payment options.`;
   return trimToMaxLength(fallback);
 };
 

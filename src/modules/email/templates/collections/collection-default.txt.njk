@@ -1,7 +1,6 @@
 Hi {{ debtor_name }},
 
-This is a reminder from Mordecai.
-Your balance is {{ amount_due }}.
+This is a reminder from {{ tenant_name | default("your collections team") }}.
 Days past due: {{ days_past_due }}.
 
 {% if payment_link %}

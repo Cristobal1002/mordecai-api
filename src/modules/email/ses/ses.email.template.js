@@ -77,6 +77,7 @@ export const buildCollectionEmailVariables = ({
 
   const meta = debtCase?.meta || {};
   return {
+    tenant_name: tenant?.name || '',
     debtor_name: debtor?.fullName || 'there',
     debtor_email: debtor?.email || '',
     amount_due: amountDue,
@@ -129,7 +130,7 @@ export const renderCollectionEmail = ({
   const hasTenantTemplate = Boolean(templateText || templateHtml);
 
   const subject = renderString(subjectTemplate, variables)
-    || (hasTenantTemplate ? `Payment reminder - ${variables.amount_due}` : null)
+    || (hasTenantTemplate ? `Payment reminder from ${variables.tenant_name || 'your collections team'}` : null)
     || renderFile(`collections/${templateName}.subject.njk`, variables);
 
   const html = renderString(htmlTemplate, variables)

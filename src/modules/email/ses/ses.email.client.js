@@ -55,7 +55,7 @@ export const sendSesEmail = async ({ to, subject, html, text, tags = [] }) => {
     Content: {
       Simple: {
         Subject: {
-          Data: String(subject || '').trim() || 'Mordecai notification',
+          Data: String(subject || '').trim() || 'Collections notification',
           Charset: 'UTF-8',
         },
         Body: {
