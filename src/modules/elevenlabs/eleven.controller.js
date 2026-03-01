@@ -108,6 +108,10 @@ export const elevenController = {
     const expectedToolSecret = process.env.ELEVENLABS_TOOL_SECRET;
     const providedToolSecret = req.get('x-eleven-tool-secret') || req.get('x-tool-secret');
     if (expectedToolSecret && expectedToolSecret !== providedToolSecret) {
+      logger.warn(
+        { hasSecret: Boolean(providedToolSecret) },
+        'Rejected ElevenLabs create-payment-agreement tool call (invalid secret)'
+      );
       return res.status(401).json({
         ok: false,
         code: 'INVALID_TOOL_SECRET',
@@ -116,6 +120,21 @@ export const elevenController = {
     }
 
     const parsedPayload = parseToolPayload(req.body);
+    logger.info(
+      {
+        conversationId: parsedPayload.conversationId,
+        tenantId: parsedPayload.tenantId,
+        caseId: parsedPayload.caseId,
+        interactionId: parsedPayload.interactionId,
+        automationId: parsedPayload.automationId,
+        hasProposal: Boolean(parsedPayload.proposal),
+        planType:
+          parsedPayload.proposal?.plan_type ||
+          parsedPayload.proposal?.planType ||
+          null,
+      },
+      'Incoming ElevenLabs create-payment-agreement tool call'
+    );
     if (!parsedPayload.tenantId || !parsedPayload.caseId || !parsedPayload.proposal) {
       return res.status(400).json({
         ok: false,
@@ -125,6 +144,15 @@ export const elevenController = {
     }
 
     const result = await createPaymentAgreementFromTool(parsedPayload);
+    logger.info(
+      {
+        ok: result?.ok === true,
+        code: result?.code || null,
+        agreementId: result?.agreement_id || null,
+        caseStatus: result?.case_status || null,
+      },
+      'Completed ElevenLabs create-payment-agreement tool call'
+    );
     return res.status(200).json(result);
   },
 };
