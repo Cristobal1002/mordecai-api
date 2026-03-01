@@ -94,27 +94,53 @@ export const buildCollectionEmailVariables = ({
   };
 };
 
-export const renderCollectionEmail = ({ debtCase, debtor, stage, tenant, custom = {} }) => {
+export const renderCollectionEmail = ({
+  debtCase,
+  debtor,
+  stage,
+  tenant,
+  messageTemplate = null,
+  custom = {},
+}) => {
   const stageRules = stage?.rules || {};
   const variables = buildCollectionEmailVariables({ debtCase, debtor, stage, tenant, custom });
   const templateName = resolveTemplateName(stageRules);
 
-  const subjectTemplate =
-    stageRules.email_subject_template || stageRules.emailSubjectTemplate || null;
-  const htmlTemplate =
-    stageRules.email_html_template || stageRules.emailHtmlTemplate || null;
-  const textTemplate =
-    stageRules.email_text_template || stageRules.emailTextTemplate || null;
+  const templateSubject = messageTemplate?.subject || null;
+  const templateText = messageTemplate?.bodyText || null;
+  const templateHtml = messageTemplate?.bodyHtml || null;
 
-  const subject =
-    renderString(subjectTemplate, variables) ||
-    renderFile(`collections/${templateName}.subject.njk`, variables);
-  const html =
-    renderString(htmlTemplate, variables) ||
-    renderFile(`collections/${templateName}.html.njk`, variables);
-  const text =
-    renderString(textTemplate, variables) ||
-    renderFile(`collections/${templateName}.txt.njk`, variables);
+  const subjectTemplate =
+    templateSubject ||
+    stageRules.email_subject_template ||
+    stageRules.emailSubjectTemplate ||
+    null;
+  const htmlTemplate =
+    templateHtml ||
+    stageRules.email_html_template ||
+    stageRules.emailHtmlTemplate ||
+    null;
+  const textTemplate =
+    templateText ||
+    stageRules.email_text_template ||
+    stageRules.emailTextTemplate ||
+    null;
+
+  const hasTenantTemplate = Boolean(templateText || templateHtml);
+
+  const subject = renderString(subjectTemplate, variables)
+    || (hasTenantTemplate ? `Payment reminder - ${variables.amount_due}` : null)
+    || renderFile(`collections/${templateName}.subject.njk`, variables);
+
+  const html = renderString(htmlTemplate, variables)
+    || (hasTenantTemplate && templateText
+      ? `<p>${renderString(templateText, variables)}</p>`
+      : null)
+    || renderFile(`collections/${templateName}.html.njk`, variables);
+
+  const text = renderString(textTemplate, variables)
+    || (hasTenantTemplate ? renderString(templateText, variables) : null)
+    || renderFile(`collections/${templateName}.txt.njk`, variables);
 
   return { subject, html, text, templateName, variables };
 };

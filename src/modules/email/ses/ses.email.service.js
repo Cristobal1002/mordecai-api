@@ -3,6 +3,7 @@ import { logger } from '../../../utils/logger.js';
 import { sendSesEmail } from './ses.email.client.js';
 import { renderCollectionEmail } from './ses.email.template.js';
 import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
+import { resolveChannelTemplate } from '../../templates/template-resolution.service.js';
 
 const createCollectionEvent = async ({
   automationId,
@@ -76,6 +77,32 @@ export const sendCollectionEmail = async ({
   let interaction = null;
 
   try {
+    const emailTemplate = await resolveChannelTemplate({
+      tenantId,
+      channel: 'email',
+      stage: stage || null,
+    });
+    if (!emailTemplate.template) {
+      await createCollectionEvent({
+        automationId,
+        debtCaseId,
+        eventType: 'email_skipped_missing_template',
+        payload: {
+          reason:
+            emailTemplate.reason === 'stage_template_not_found'
+              ? 'Email template configured in stage was not found or is inactive'
+              : 'Email template is not configured for this stage',
+          templateReason: emailTemplate.reason,
+        },
+      });
+      return {
+        ok: false,
+        channel: 'email',
+        outcome: 'email_missing_template',
+        message: 'Email template is missing',
+      };
+    }
+
     const tenant = tenantId ? await Tenant.findByPk(tenantId, { attributes: ['name'] }) : null;
     const paymentLink = await getOrCreatePaymentLinkUrl({
       tenantId,
@@ -87,6 +114,7 @@ export const sendCollectionEmail = async ({
       debtor,
       stage,
       tenant,
+      messageTemplate: emailTemplate.template,
       custom: { paymentLink },
     });
     interaction = await createInteractionLog({

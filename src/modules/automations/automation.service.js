@@ -7,6 +7,7 @@ import {
 } from '../../queues/case-actions.queue.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { strategyRepository } from '../strategies/strategy.repository.js';
+import { resolveChannelTemplate } from '../templates/template-resolution.service.js';
 import { NotFoundError, ConflictError } from '../../errors/index.js';
 import { logger } from '../../utils/logger.js';
 import { resolveApprovalStatus } from '../cases/approval-resolver.service.js';
@@ -18,6 +19,13 @@ const resolveDispatchChannels = (channels = {}) =>
   CHANNEL_ORDER.filter((channel) => channels[channel] === true);
 const isStageChannelEnabled = (state, channel) =>
   state?.currentStage?.channels?.[channel] === true;
+
+const resolveMissingTemplateMessage = (channel, reason) => {
+  if (reason === 'stage_template_not_found') {
+    return `${channel.toUpperCase()} template configured in stage was not found or is inactive`;
+  }
+  return `${channel.toUpperCase()} template is not configured for this stage`;
+};
 
 function selectStageByDaysPastDue(stages, daysPastDue) {
   const active = (stages || []).filter((s) => s.isActive !== false);
@@ -469,7 +477,7 @@ export const automationService = {
       queued: ['call_queued', 'sms_queued', 'email_queued'],
       sent: ['call_queued', 'sms_sent', 'email_sent'],
       delivered: ['sms_sent', 'email_sent'],
-      failed: ['call_dispatch_queue_unavailable', 'sms_failed', 'email_failed', 'sms_skipped_invalid_contact', 'email_skipped_invalid_contact'],
+      failed: ['call_dispatch_queue_unavailable', 'sms_failed', 'email_failed', 'sms_skipped_invalid_contact', 'email_skipped_invalid_contact', 'sms_skipped_missing_template', 'email_skipped_missing_template'],
       clicked: ['link_clicked'],
       opened: [],
       answered: [],
@@ -803,6 +811,26 @@ export const automationService = {
         continue;
       }
       if (channel === 'sms') {
+        const smsTemplate = await resolveChannelTemplate({
+          tenantId: automation.tenantId,
+          channel: 'sms',
+          stage,
+        });
+        if (!smsTemplate.template) {
+          outcomes.push('sms_skipped_missing_template');
+          await CollectionEvent.create({
+            automationId,
+            debtCaseId: state.debtCaseId,
+            channel: 'sms',
+            eventType: 'sms_skipped_missing_template',
+            payload: {
+              reason: resolveMissingTemplateMessage('sms', smsTemplate.reason),
+              templateReason: smsTemplate.reason,
+            },
+          });
+          continue;
+        }
+
         const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.SMS_CASE, {
           tenantId: automation.tenantId,
           caseId: state.debtCaseId,
@@ -824,6 +852,26 @@ export const automationService = {
         continue;
       }
       if (channel === 'email') {
+        const emailTemplate = await resolveChannelTemplate({
+          tenantId: automation.tenantId,
+          channel: 'email',
+          stage,
+        });
+        if (!emailTemplate.template) {
+          outcomes.push('email_skipped_missing_template');
+          await CollectionEvent.create({
+            automationId,
+            debtCaseId: state.debtCaseId,
+            channel: 'email',
+            eventType: 'email_skipped_missing_template',
+            payload: {
+              reason: resolveMissingTemplateMessage('email', emailTemplate.reason),
+              templateReason: emailTemplate.reason,
+            },
+          });
+          continue;
+        }
+
         const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.EMAIL_CASE, {
           tenantId: automation.tenantId,
           caseId: state.debtCaseId,
@@ -880,6 +928,14 @@ export const automationService = {
     if (!isStageChannelEnabled(state, 'sms')) {
       throw new ConflictError('SMS is disabled for this case stage');
     }
+    const smsTemplate = await resolveChannelTemplate({
+      tenantId: automation.tenantId,
+      channel: 'sms',
+      stage: state.currentStage || null,
+    });
+    if (!smsTemplate.template) {
+      throw new ConflictError(resolveMissingTemplateMessage('sms', smsTemplate.reason));
+    }
     if ((state.debtCase?.debtor?.phone || '').trim() === '') {
       throw new ConflictError('Case has no phone number');
     }
@@ -924,6 +980,14 @@ export const automationService = {
     if (!state) throw new NotFoundError('Case is not enrolled in this automation');
     if (!isStageChannelEnabled(state, 'email')) {
       throw new ConflictError('Email is disabled for this case stage');
+    }
+    const emailTemplate = await resolveChannelTemplate({
+      tenantId: automation.tenantId,
+      channel: 'email',
+      stage: state.currentStage || null,
+    });
+    if (!emailTemplate.template) {
+      throw new ConflictError(resolveMissingTemplateMessage('email', emailTemplate.reason));
     }
     if ((state.debtCase?.debtor?.email || '').trim() === '') {
       throw new ConflictError('Case has no email');

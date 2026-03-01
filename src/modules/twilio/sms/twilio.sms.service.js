@@ -1,8 +1,9 @@
-import { CollectionEvent, InteractionLog, TenantMessageTemplate } from '../../../models/index.js';
+import { CollectionEvent, InteractionLog } from '../../../models/index.js';
 import { logger } from '../../../utils/logger.js';
 import { buildCollectionSmsBody } from './twilio.sms.template.js';
 import { sendTwilioSms } from './twilio.sms.client.js';
 import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
+import { resolveChannelTemplate } from '../../templates/template-resolution.service.js';
 
 const createCollectionEvent = async ({
   automationId,
@@ -78,20 +79,37 @@ export const sendCollectionSms = async ({
     automationId,
   });
 
-  // Priority: 1) Stage rules, 2) Tenant SMS template, 3) fallback
-  let customTemplate =
-    stage?.rules?.sms_template ||
-    stage?.rules?.smsTemplate ||
-    stage?.rules?.custom_instructions ||
-    null;
+  const smsTemplate = await resolveChannelTemplate({
+    tenantId,
+    channel: 'sms',
+    stage: stage || null,
+  });
+  const customTemplate = smsTemplate.template?.bodyText
+    ? String(smsTemplate.template.bodyText).trim()
+    : '';
+
   if (!customTemplate) {
-    const tenantTemplate = await TenantMessageTemplate.findOne({
-      where: { tenantId, channel: ['SMS', 'sms'], isActive: true },
-      order: [['createdAt', 'ASC']],
-      attributes: ['bodyText'],
+    await createCollectionEvent({
+      automationId,
+      debtCaseId,
+      eventType: 'sms_skipped_missing_template',
+      payload: {
+        reason:
+          smsTemplate.reason === 'stage_template_not_found'
+            ? 'SMS template configured in stage was not found or is inactive'
+            : 'SMS template is not configured for this stage',
+        templateReason: smsTemplate.reason,
+      },
     });
-    if (tenantTemplate?.bodyText) customTemplate = tenantTemplate.bodyText;
+
+    return {
+      ok: false,
+      channel: 'sms',
+      outcome: 'sms_missing_template',
+      message: 'SMS template is missing',
+    };
   }
+
   const body = buildCollectionSmsBody({
     debtorName: debtor?.fullName,
     amountDueCents: debtCase?.amountDueCents,

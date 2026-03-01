@@ -14,6 +14,7 @@ import {
   CaseDispute,
 } from '../../models/index.js';
 import { automationService } from '../automations/automation.service.js';
+import { resolveChannelTemplate } from '../templates/template-resolution.service.js';
 import { logger } from '../../utils/logger.js';
 import {
   addCaseActionJob,
@@ -47,6 +48,13 @@ const CHANNEL_ORDER = ['call', 'sms', 'email', 'whatsapp'];
 
 const resolveDispatchChannels = (channels = {}) =>
   CHANNEL_ORDER.filter((channel) => channels[channel] === true);
+
+const resolveMissingTemplateMessage = (channel, reason) => {
+  if (reason === 'stage_template_not_found') {
+    return `${channel.toUpperCase()} template configured in stage was not found or is inactive`;
+  }
+  return `${channel.toUpperCase()} template is not configured for this stage`;
+};
 
 /**
  * Run one tick: recompute stages (DPD changes), then process all active automations and their due cases.
@@ -205,6 +213,27 @@ export async function runCollectionTick() {
             }
 
             if (dispatchChannel === 'sms') {
+              const smsTemplate = await resolveChannelTemplate({
+                tenantId: automation.tenantId,
+                channel: 'sms',
+                stage,
+              });
+              if (!smsTemplate.template) {
+                outcomes.push('sms_skipped_missing_template');
+                await CollectionEvent.create({
+                  automationId: automation.id,
+                  debtCaseId: state.debtCaseId,
+                  channel: 'sms',
+                  eventType: 'sms_skipped_missing_template',
+                  payload: {
+                    reason: resolveMissingTemplateMessage('sms', smsTemplate.reason),
+                    templateReason: smsTemplate.reason,
+                    stageId: stage?.id || null,
+                  },
+                });
+                continue;
+              }
+
               const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.SMS_CASE, {
                 tenantId: automation.tenantId,
                 caseId: state.debtCaseId,
@@ -239,6 +268,27 @@ export async function runCollectionTick() {
             }
 
             if (dispatchChannel === 'email') {
+              const emailTemplate = await resolveChannelTemplate({
+                tenantId: automation.tenantId,
+                channel: 'email',
+                stage,
+              });
+              if (!emailTemplate.template) {
+                outcomes.push('email_skipped_missing_template');
+                await CollectionEvent.create({
+                  automationId: automation.id,
+                  debtCaseId: state.debtCaseId,
+                  channel: 'email',
+                  eventType: 'email_skipped_missing_template',
+                  payload: {
+                    reason: resolveMissingTemplateMessage('email', emailTemplate.reason),
+                    templateReason: emailTemplate.reason,
+                    stageId: stage?.id || null,
+                  },
+                });
+                continue;
+              }
+
               const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.EMAIL_CASE, {
                 tenantId: automation.tenantId,
                 caseId: state.debtCaseId,
