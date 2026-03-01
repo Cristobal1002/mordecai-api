@@ -1,6 +1,9 @@
 {% extends "base/layout.njk" %}
 
 {% block content %}
+{% if custom_email_body_html %}
+{{ custom_email_body_html | safe }}
+{% else %}
 <p style="margin:0 0 12px;color:#f8f9fb;">Hi {{ debtor_name }},</p>
 <p style="margin:0 0 12px;color:#d1d5db;">
   This is a reminder from {{ tenant_name | default("your collections team") }} regarding your account.
@@ -18,5 +21,6 @@
 <p style="margin:16px 0 0;color:#9ca3af;">
   If you need a payment plan, reply to this email and we will assist.
 </p>
+{% endif %}
 {% endblock %}
 

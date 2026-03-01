@@ -39,18 +39,74 @@ const toCurrency = (amountDueCents, currency = DEFAULT_CURRENCY) => {
   }
 };
 
-const trimSpaces = (value) =>
+const normalizeInlineText = (value) =>
   String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
 
-const renderString = (template, variables) => {
-  if (typeof template !== 'string' || !template.trim()) return null;
-  return trimSpaces(getRenderer().renderString(template, variables));
+const normalizeMultilineText = (value) => {
+  const text = String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+  if (!text) return '';
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n');
 };
 
-const renderFile = (templatePath, variables) =>
-  trimSpaces(getRenderer().render(templatePath, variables));
+const renderStringText = (template, variables, { multiline = false } = {}) => {
+  if (typeof template !== 'string' || !template.trim()) return null;
+  const rendered = getRenderer().renderString(template, variables);
+  return multiline ? normalizeMultilineText(rendered) : normalizeInlineText(rendered);
+};
+
+const renderStringHtml = (template, variables) => {
+  if (typeof template !== 'string' || !template.trim()) return null;
+  const rendered = getRenderer().renderString(template, variables);
+  const normalized = String(rendered || '').trim();
+  return normalized || null;
+};
+
+const renderFileText = (templatePath, variables) =>
+  normalizeMultilineText(getRenderer().render(templatePath, variables));
+
+const renderFileHtml = (templatePath, variables) => {
+  const rendered = getRenderer().render(templatePath, variables);
+  const normalized = String(rendered || '').trim();
+  return normalized || null;
+};
+
+const escapeHtml = (value) =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const linkifyText = (value) =>
+  String(value || '').replace(
+    /(https?:\/\/[^\s<]+)/g,
+    (match) => `<a href="${match}" style="color:#9c77f5;text-decoration:underline;">${match}</a>`
+  );
+
+const plainTextToHtml = (value) => {
+  const text = normalizeMultilineText(value);
+  if (!text) return '';
+
+  return text
+    .split('\n\n')
+    .map((paragraph) => {
+      const lineHtml = paragraph
+        .split('\n')
+        .map((line) => linkifyText(escapeHtml(line)))
+        .join('<br />');
+      return `<p style="margin:0 0 12px;color:#d1d5db;">${lineHtml}</p>`;
+    })
+    .join('\n');
+};
 
 const resolveTemplateName = (stageRules = {}) => {
   const customName =
@@ -88,7 +144,7 @@ export const buildCollectionEmailVariables = ({
     stage_name: stage?.name || 'collection stage',
     payment_link: custom.paymentLink || debtCase?.paymentLinkUrl || '',
     case_id: debtCase?.id || '',
-    property_name: meta.property_name || meta.propertyName || '',
+    property_name: meta.property_name || meta.propertyName || 'your account',
     unit_number: meta.unit_number || meta.unitNumber || '',
     lease_number: meta.lease_number || meta.leaseNumber || meta.lease_id || '',
     ...custom,
@@ -128,20 +184,21 @@ export const renderCollectionEmail = ({
     null;
 
   const hasTenantTemplate = Boolean(templateText || templateHtml);
+  const renderedTemplateText = renderStringText(templateText, variables, { multiline: true });
 
-  const subject = renderString(subjectTemplate, variables)
+  const subject = renderStringText(subjectTemplate, variables)
     || (hasTenantTemplate ? `Payment reminder from ${variables.tenant_name || 'your collections team'}` : null)
-    || renderFile(`collections/${templateName}.subject.njk`, variables);
+    || renderFileText(`collections/${templateName}.subject.njk`, variables);
 
-  const html = renderString(htmlTemplate, variables)
-    || (hasTenantTemplate && templateText
-      ? `<p>${renderString(templateText, variables)}</p>`
-      : null)
-    || renderFile(`collections/${templateName}.html.njk`, variables);
+  const html = renderStringHtml(htmlTemplate, variables)
+    || renderFileHtml(`collections/${templateName}.html.njk`, {
+      ...variables,
+      custom_email_body_html: renderedTemplateText ? plainTextToHtml(renderedTemplateText) : '',
+    });
 
-  const text = renderString(textTemplate, variables)
-    || (hasTenantTemplate ? renderString(templateText, variables) : null)
-    || renderFile(`collections/${templateName}.txt.njk`, variables);
+  const text = renderStringText(textTemplate, variables, { multiline: true })
+    || (hasTenantTemplate ? renderedTemplateText : null)
+    || renderFileText(`collections/${templateName}.txt.njk`, variables);
 
   return { subject, html, text, templateName, variables };
 };
