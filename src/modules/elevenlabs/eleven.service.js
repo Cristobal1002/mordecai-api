@@ -64,6 +64,25 @@ const toDateOnly = (value) => {
   return date.toISOString().slice(0, 10);
 };
 
+const isValidEmail = (value) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+
+const normalizeEmailCandidate = (value) => {
+  const email = String(value || '').trim().toLowerCase();
+  if (!email) return null;
+  return isValidEmail(email) ? email : null;
+};
+
+const maskEmail = (value) => {
+  const email = normalizeEmailCandidate(value);
+  if (!email) return '';
+  const [local = '', domain = ''] = email.split('@');
+  if (!domain) return '';
+  const localMasked =
+    local.length <= 2 ? `${local.charAt(0) || ''}***` : `${local.slice(0, 2)}***`;
+  return `${localMasked}@${domain}`;
+};
+
 /**
  * Resolve or create a PaymentLink and return the URL.
  * URL format: {base}/p/{token} — does not expose agreement ID.
@@ -486,12 +505,13 @@ const sendAgreementPaymentLinkEmail = async ({
   tenantId,
   debtCaseId,
   debtor,
+  deliveryEmail,
   paymentLinkUrl,
   tenantName,
   automationId,
   agreementId,
 }) => {
-  const to = String(debtor?.email || '').trim();
+  const to = normalizeEmailCandidate(deliveryEmail) || normalizeEmailCandidate(debtor?.email);
   if (!to) {
     await createCollectionEvent({
       automationId,
@@ -499,11 +519,15 @@ const sendAgreementPaymentLinkEmail = async ({
       channel: 'email',
       eventType: 'payment_link_failed',
       payload: {
-        reason: 'missing_email',
+        reason: deliveryEmail ? 'invalid_delivery_email' : 'missing_email',
         agreement_id: agreementId,
       },
     });
-    return { ok: false, channel: 'email', reason: 'missing_email' };
+    return {
+      ok: false,
+      channel: 'email',
+      reason: deliveryEmail ? 'invalid_delivery_email' : 'missing_email',
+    };
   }
 
   const subject = buildAgreementEmailSubject(tenantName);
@@ -749,6 +773,8 @@ export const registerCallForInteraction = async ({
     debtor_id: String(debtor.id),
     interaction_id: String(interaction.id),
     customer_name: debtor.fullName,
+    debtor_email: String(debtor.email || '').trim(),
+    debtor_email_masked: maskEmail(debtor.email),
     balance_amount_cents: String(debtCase.amountDueCents),
     balance_amount: centsToDisplayAmount(debtCase.amountDueCents),
     currency: debtCase.currency || 'USD',
@@ -992,7 +1018,16 @@ export const createPaymentAgreementFromTool = async ({
   });
 
   const requestedChannel = resolvePreferredDeliveryChannel(proposal);
-  const hasEmail = Boolean(String(debtCase.debtor?.email || '').trim());
+  const requestedDeliveryEmail = normalizeEmailCandidate(
+    proposal?.delivery_email ||
+      proposal?.deliveryEmail ||
+      proposal?.email ||
+      proposal?.recipient_email ||
+      proposal?.recipientEmail
+  );
+  const effectiveDeliveryEmail =
+    requestedDeliveryEmail || normalizeEmailCandidate(debtCase.debtor?.email);
+  const hasEmail = Boolean(effectiveDeliveryEmail);
   const hasPhone = Boolean(String(debtCase.debtor?.phone || '').trim());
   let deliveryChannels = [];
 
@@ -1024,6 +1059,7 @@ export const createPaymentAgreementFromTool = async ({
           tenantId,
           debtCaseId: debtCase.id,
           debtor: debtCase.debtor,
+          deliveryEmail: effectiveDeliveryEmail,
           paymentLinkUrl: attributedLink,
           tenantName: tenantDisplayName,
           automationId: resolvedAutomationId,
@@ -1050,21 +1086,35 @@ export const createPaymentAgreementFromTool = async ({
 
   const successfulDeliveries = deliveryResults.filter((result) => result.ok);
   const failedDeliveries = deliveryResults.filter((result) => !result.ok);
-  const primarySuccessfulChannel = successfulDeliveries[0]?.channel || null;
-  const speakBack = primarySuccessfulChannel
-    ? `Perfect. I just sent your secure payment link by ${primarySuccessfulChannel}. Please confirm you received it.`
-    : 'Perfect. Your agreement is registered and your secure payment link is ready. I can resend it by email or SMS.';
+  const sentByEmail = successfulDeliveries.some((result) => result.channel === 'email');
+  const sentBySms = successfulDeliveries.some((result) => result.channel === 'sms');
+  const maskedDeliveryEmail = maskEmail(effectiveDeliveryEmail);
+  let speakBack =
+    'Perfect. Your agreement is registered and your secure payment link is ready. I can resend it by email or SMS.';
+  if (sentByEmail && sentBySms) {
+    speakBack = maskedDeliveryEmail
+      ? `Perfect. I sent your secure link by email to ${maskedDeliveryEmail} and by SMS. Please confirm you received it.`
+      : 'Perfect. I sent your secure link by email and by SMS. Please confirm you received it.';
+  } else if (sentByEmail) {
+    speakBack = maskedDeliveryEmail
+      ? `Perfect. I sent your secure link to ${maskedDeliveryEmail}. Please confirm you received it.`
+      : 'Perfect. I sent your secure link by email. Please confirm you received it.';
+  } else if (sentBySms) {
+    speakBack =
+      'Perfect. I sent your secure link by SMS. Please confirm you received it.';
+  }
 
   return {
     ok: true,
     agreement_id: agreement.id,
     payment_link_url: paymentLinkUrl,
-    email_sent: successfulDeliveries.some((d) => d.channel === 'email'),
-    sms_sent: successfulDeliveries.some((d) => d.channel === 'sms'),
+    email_sent: sentByEmail,
+    sms_sent: sentBySms,
     link_delivery: {
       requested_channel: requestedChannel,
       attempted_channels: deliveryChannels,
       successful_channels: successfulDeliveries.map((d) => d.channel),
+      email_masked: maskedDeliveryEmail || null,
       failed_channels: failedDeliveries.map((d) => ({
         channel: d.channel,
         reason: d.reason || null,
