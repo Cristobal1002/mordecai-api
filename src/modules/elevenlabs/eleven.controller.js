@@ -25,13 +25,20 @@ const parseToolPayload = (body) => {
     body?.data?.tool_call?.arguments ||
     body?.data?.arguments ||
     body;
+  const proposal = candidate.proposal || candidate;
 
   return {
     conversationId,
     tenantId: candidate.tenant_id || candidate.tenantId || null,
     caseId: candidate.case_id || candidate.caseId || null,
     interactionId: candidate.interaction_id || candidate.interactionId || null,
-    proposal: candidate.proposal || candidate,
+    automationId:
+      candidate.automation_id ||
+      candidate.automationId ||
+      proposal?.automation_id ||
+      proposal?.automationId ||
+      null,
+    proposal,
   };
 };
 

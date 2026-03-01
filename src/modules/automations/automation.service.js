@@ -475,9 +475,9 @@ export const automationService = {
 
     const statusToEventTypes = {
       queued: ['call_queued', 'sms_queued', 'email_queued'],
-      sent: ['call_queued', 'sms_sent', 'email_sent'],
-      delivered: ['sms_sent', 'email_sent'],
-      failed: ['call_dispatch_queue_unavailable', 'sms_failed', 'email_failed', 'sms_skipped_invalid_contact', 'email_skipped_invalid_contact', 'sms_skipped_missing_template', 'email_skipped_missing_template'],
+      sent: ['call_queued', 'sms_sent', 'email_sent', 'payment_link_sent'],
+      delivered: ['sms_sent', 'email_sent', 'payment_link_sent'],
+      failed: ['call_dispatch_queue_unavailable', 'sms_failed', 'email_failed', 'sms_skipped_invalid_contact', 'email_skipped_invalid_contact', 'sms_skipped_missing_template', 'email_skipped_missing_template', 'payment_link_failed'],
       clicked: ['link_clicked'],
       opened: [],
       answered: [],
@@ -486,7 +486,7 @@ export const automationService = {
     };
     const outcomeToEventTypes = {
       reached: [],
-      promise: [],
+      promise: ['agreement_created'],
       paid: [],
       dispute: [],
       excluded: ['case_excluded'],

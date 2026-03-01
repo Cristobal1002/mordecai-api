@@ -5,11 +5,18 @@ import {
   FlowPolicy,
   InteractionLog,
   PaymentAgreement,
-  PaymentLink,
+  CaseAutomationState,
+  CollectionEvent,
   Tenant,
 } from '../../models/index.js';
 import { resolvePolicyForCase } from '../collections/policy-resolver.service.js';
 import { buildPaymentInstructions } from '../pay/payment-instructions.service.js';
+import {
+  appendPaymentLinkAttribution,
+  getOrCreatePaymentLinkUrl,
+} from '../pay/payment-link-resolver.service.js';
+import { sendSesEmail } from '../email/ses/ses.email.client.js';
+import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
 import { logger } from '../../utils/logger.js';
 import { registerTwilioCallInElevenLabs } from './eleven.client.js';
 
@@ -58,27 +65,15 @@ const toDateOnly = (value) => {
 };
 
 /**
- * Create a PaymentLink record and return the URL.
+ * Resolve or create a PaymentLink and return the URL.
  * URL format: {base}/p/{token} — does not expose agreement ID.
  */
-const createPaymentLinkAndGetUrl = async ({ tenantId, debtCaseId, paymentAgreementId }) => {
-  const { PaymentLink } = await import('../../models/index.js');
-  const crypto = await import('crypto');
-  const token = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 hours
-
-  await PaymentLink.create({
+const createPaymentLinkAndGetUrl = async ({ tenantId, debtCaseId, paymentAgreementId }) =>
+  getOrCreatePaymentLinkUrl({
     tenantId,
     debtCaseId,
-    paymentAgreementId: paymentAgreementId ?? null,
-    token,
-    status: 'PENDING',
-    expiresAt,
+    paymentAgreementId,
   });
-
-  const baseUrl = (process.env.PAYMENTS_BASE_URL || 'https://pay.mordecai.ai').replace(/\/$/, '');
-  return `${baseUrl}/p/${token}`;
-};
 
 const parseAmountCents = (value) => {
   if (value === null || value === undefined) return null;
@@ -285,6 +280,321 @@ const validateProposalAgainstRules = ({ proposal, balanceCents, rules }) => {
   }
 
   return { ok: true, planType, upfrontAmountCents, installmentsCount };
+};
+
+const resolvePreferredDeliveryChannel = (proposal = {}) => {
+  const candidateRaw =
+    proposal?.delivery_channel ||
+    proposal?.deliveryChannel ||
+    proposal?.preferred_delivery_channel ||
+    proposal?.preferredDeliveryChannel ||
+    proposal?.send_via ||
+    proposal?.sendVia ||
+    proposal?.channel ||
+    null;
+
+  const candidate = String(candidateRaw || '')
+    .trim()
+    .toLowerCase();
+
+  if (!candidate) return null;
+  if (['email', 'mail'].includes(candidate)) return 'email';
+  if (['sms', 'text', 'text_message'].includes(candidate)) return 'sms';
+  if (['both', 'all', 'email_sms', 'sms_email'].includes(candidate)) return 'both';
+  return null;
+};
+
+const resolveAutomationIdForCase = async ({ debtCaseId, automationId = null }) => {
+  if (automationId) return automationId;
+  const state = await CaseAutomationState.findOne({
+    where: { debtCaseId, status: 'active' },
+    order: [['updatedAt', 'DESC']],
+  });
+  return state?.automationId || null;
+};
+
+const createCollectionEvent = async ({
+  automationId,
+  debtCaseId,
+  channel,
+  eventType,
+  payload = {},
+}) => {
+  if (!automationId) return null;
+  return CollectionEvent.create({
+    automationId,
+    debtCaseId,
+    channel,
+    eventType,
+    payload,
+  });
+};
+
+const createLinkDeliveryInteractionLog = async ({
+  tenantId,
+  debtCaseId,
+  debtorId,
+  type,
+  status,
+  providerRef = null,
+  summary = null,
+  outcome = null,
+  error = {},
+  aiData = {},
+}) =>
+  InteractionLog.create({
+    tenantId,
+    debtCaseId,
+    debtorId,
+    type,
+    direction: 'OUTBOUND',
+    channelProvider: type === 'SMS' ? 'twilio' : 'ses',
+    status,
+    providerRef,
+    summary,
+    outcome,
+    startedAt: new Date(),
+    endedAt: new Date(),
+    aiData,
+    error,
+  });
+
+const buildAgreementSmsBody = ({ debtorName, tenantName, paymentLinkUrl }) =>
+  `Hi ${debtorName}, thanks for speaking with ${tenantName}. ` +
+  `Here is your secure case link to complete payment or upload dispute evidence: ${paymentLinkUrl}`;
+
+const buildAgreementEmailSubject = (tenantName) =>
+  `${tenantName} - Your secure payment link`;
+
+const buildAgreementEmailText = ({ debtorName, tenantName, paymentLinkUrl }) =>
+  [
+    `Hello ${debtorName},`,
+    '',
+    `Thanks for speaking with ${tenantName}.`,
+    'Use your secure case link below to review your account, complete payment, or upload dispute evidence:',
+    paymentLinkUrl,
+    '',
+    'If you need help, reply to this email.',
+  ].join('\n');
+
+const buildAgreementEmailHtml = ({ debtorName, tenantName, paymentLinkUrl }) => `
+  <p>Hello ${debtorName},</p>
+  <p>Thanks for speaking with ${tenantName}.</p>
+  <p>Use your secure case link below to review your account, complete payment, or upload dispute evidence:</p>
+  <p><a href="${paymentLinkUrl}">${paymentLinkUrl}</a></p>
+  <p>If you need help, reply to this email.</p>
+`;
+
+const sendAgreementPaymentLinkSms = async ({
+  tenantId,
+  debtCaseId,
+  debtor,
+  paymentLinkUrl,
+  tenantName,
+  automationId,
+  agreementId,
+}) => {
+  const to = String(debtor?.phone || '').trim();
+  if (!to) {
+    await createCollectionEvent({
+      automationId,
+      debtCaseId,
+      channel: 'sms',
+      eventType: 'payment_link_failed',
+      payload: {
+        reason: 'missing_phone',
+        agreement_id: agreementId,
+      },
+    });
+    return { ok: false, channel: 'sms', reason: 'missing_phone' };
+  }
+
+  const body = buildAgreementSmsBody({
+    debtorName: debtor.fullName || 'there',
+    tenantName,
+    paymentLinkUrl,
+  });
+
+  try {
+    const provider = await sendTwilioSms({ to, body });
+    const log = await createLinkDeliveryInteractionLog({
+      tenantId,
+      debtCaseId,
+      debtorId: debtor.id,
+      type: 'SMS',
+      status: 'sent',
+      providerRef: provider.messageSid,
+      summary: body.slice(0, 500),
+      aiData: {
+        payment_link_url: paymentLinkUrl,
+        agreement_id: agreementId,
+        context: 'agreement_link_delivery',
+      },
+    });
+
+    await createCollectionEvent({
+      automationId,
+      debtCaseId,
+      channel: 'sms',
+      eventType: 'payment_link_sent',
+      payload: {
+        interactionLogId: log.id,
+        agreement_id: agreementId,
+        to,
+        providerRef: provider.messageSid,
+      },
+    });
+
+    return {
+      ok: true,
+      channel: 'sms',
+      interactionLogId: log.id,
+      providerRef: provider.messageSid,
+    };
+  } catch (error) {
+    const message = error?.message || 'SMS payment link delivery failed';
+    await createLinkDeliveryInteractionLog({
+      tenantId,
+      debtCaseId,
+      debtorId: debtor.id,
+      type: 'SMS',
+      status: 'failed',
+      outcome: 'FAILED',
+      summary: 'Payment link delivery failed by SMS.',
+      error: { message },
+      aiData: {
+        payment_link_url: paymentLinkUrl,
+        agreement_id: agreementId,
+        context: 'agreement_link_delivery',
+      },
+    });
+    await createCollectionEvent({
+      automationId,
+      debtCaseId,
+      channel: 'sms',
+      eventType: 'payment_link_failed',
+      payload: {
+        agreement_id: agreementId,
+        reason: message,
+      },
+    });
+    return { ok: false, channel: 'sms', reason: message };
+  }
+};
+
+const sendAgreementPaymentLinkEmail = async ({
+  tenantId,
+  debtCaseId,
+  debtor,
+  paymentLinkUrl,
+  tenantName,
+  automationId,
+  agreementId,
+}) => {
+  const to = String(debtor?.email || '').trim();
+  if (!to) {
+    await createCollectionEvent({
+      automationId,
+      debtCaseId,
+      channel: 'email',
+      eventType: 'payment_link_failed',
+      payload: {
+        reason: 'missing_email',
+        agreement_id: agreementId,
+      },
+    });
+    return { ok: false, channel: 'email', reason: 'missing_email' };
+  }
+
+  const subject = buildAgreementEmailSubject(tenantName);
+  const text = buildAgreementEmailText({
+    debtorName: debtor.fullName || 'there',
+    tenantName,
+    paymentLinkUrl,
+  });
+  const html = buildAgreementEmailHtml({
+    debtorName: debtor.fullName || 'there',
+    tenantName,
+    paymentLinkUrl,
+  });
+
+  try {
+    const provider = await sendSesEmail({
+      to,
+      subject,
+      text,
+      html,
+      tags: [
+        { name: 'tenant_id', value: String(tenantId) },
+        { name: 'debt_case_id', value: String(debtCaseId) },
+        { name: 'agreement_id', value: String(agreementId) },
+        { name: 'channel', value: 'email' },
+      ],
+    });
+
+    const log = await createLinkDeliveryInteractionLog({
+      tenantId,
+      debtCaseId,
+      debtorId: debtor.id,
+      type: 'EMAIL',
+      status: 'sent',
+      providerRef: provider.messageId,
+      summary: text.slice(0, 500),
+      aiData: {
+        payment_link_url: paymentLinkUrl,
+        agreement_id: agreementId,
+        context: 'agreement_link_delivery',
+      },
+    });
+
+    await createCollectionEvent({
+      automationId,
+      debtCaseId,
+      channel: 'email',
+      eventType: 'payment_link_sent',
+      payload: {
+        interactionLogId: log.id,
+        agreement_id: agreementId,
+        to,
+        providerRef: provider.messageId,
+      },
+    });
+
+    return {
+      ok: true,
+      channel: 'email',
+      interactionLogId: log.id,
+      providerRef: provider.messageId,
+    };
+  } catch (error) {
+    const message = error?.message || 'Email payment link delivery failed';
+    await createLinkDeliveryInteractionLog({
+      tenantId,
+      debtCaseId,
+      debtorId: debtor.id,
+      type: 'EMAIL',
+      status: 'failed',
+      outcome: 'FAILED',
+      summary: 'Payment link delivery failed by email.',
+      error: { message },
+      aiData: {
+        payment_link_url: paymentLinkUrl,
+        agreement_id: agreementId,
+        context: 'agreement_link_delivery',
+      },
+    });
+    await createCollectionEvent({
+      automationId,
+      debtCaseId,
+      channel: 'email',
+      eventType: 'payment_link_failed',
+      payload: {
+        agreement_id: agreementId,
+        reason: message,
+      },
+    });
+    return { ok: false, channel: 'email', reason: message };
+  }
 };
 
 const resolveCaseStatusFromOutcome = (currentStatus, outcome) => {
@@ -593,6 +903,7 @@ export const createPaymentAgreementFromTool = async ({
   caseId,
   interactionId,
   conversationId,
+  automationId,
   proposal,
 }) => {
   const debtCase = await DebtCase.findOne({
@@ -650,6 +961,23 @@ export const createPaymentAgreementFromTool = async ({
   });
   await agreement.update({ paymentLinkUrl });
 
+  const resolvedAutomationId = await resolveAutomationIdForCase({
+    debtCaseId: debtCase.id,
+    automationId,
+  });
+  await createCollectionEvent({
+    automationId: resolvedAutomationId,
+    debtCaseId: debtCase.id,
+    channel: 'call',
+    eventType: 'agreement_created',
+    payload: {
+      agreement_id: agreement.id,
+      interaction_id: interactionId || null,
+      conversation_id: conversationId || null,
+      plan_type: validation.planType,
+    },
+  });
+
   const caseStatus = agreementType === 'INSTALLMENTS' ? 'PAYMENT_PLAN' : 'PROMISE_TO_PAY';
   await debtCase.update({
     status: caseStatus,
@@ -663,31 +991,86 @@ export const createPaymentAgreementFromTool = async ({
     },
   });
 
-  if (debtCase.debtor?.email) {
-    await InteractionLog.create({
-      tenantId,
-      debtCaseId: debtCase.id,
-      debtorId: debtCase.debtor.id,
-      type: 'EMAIL',
-      direction: 'OUTBOUND',
-      channelProvider: 'SYSTEM',
-      status: 'sent',
-      outcome: caseStatus === 'PAYMENT_PLAN' ? 'PAYMENT_PLAN' : 'PROMISE_TO_PAY',
-      summary: 'Payment link sent to debtor email.',
-      aiData: {
-        payment_link_url: paymentLinkUrl,
-        agreement_id: agreement.id,
-      },
-    });
+  const requestedChannel = resolvePreferredDeliveryChannel(proposal);
+  const hasEmail = Boolean(String(debtCase.debtor?.email || '').trim());
+  const hasPhone = Boolean(String(debtCase.debtor?.phone || '').trim());
+  let deliveryChannels = [];
+
+  if (requestedChannel === 'email') {
+    deliveryChannels = hasEmail ? ['email'] : hasPhone ? ['sms'] : [];
+  } else if (requestedChannel === 'sms') {
+    deliveryChannels = hasPhone ? ['sms'] : hasEmail ? ['email'] : [];
+  } else if (requestedChannel === 'both') {
+    deliveryChannels = [hasEmail ? 'email' : null, hasPhone ? 'sms' : null].filter(Boolean);
+  } else {
+    deliveryChannels = hasEmail ? ['email'] : hasPhone ? ['sms'] : [];
   }
+
+  const tenantDisplayName = String(
+    debtCase.meta?.tenant_display_name || debtCase.meta?.tenant_name || 'Mordecai'
+  );
+  const deliveryResults = [];
+
+  for (const channel of deliveryChannels) {
+    const attributedLink = appendPaymentLinkAttribution(
+      paymentLinkUrl,
+      channel,
+      resolvedAutomationId
+    );
+    if (channel === 'email') {
+      // eslint-disable-next-line no-await-in-loop
+      deliveryResults.push(
+        await sendAgreementPaymentLinkEmail({
+          tenantId,
+          debtCaseId: debtCase.id,
+          debtor: debtCase.debtor,
+          paymentLinkUrl: attributedLink,
+          tenantName: tenantDisplayName,
+          automationId: resolvedAutomationId,
+          agreementId: agreement.id,
+        })
+      );
+      continue;
+    }
+    if (channel === 'sms') {
+      // eslint-disable-next-line no-await-in-loop
+      deliveryResults.push(
+        await sendAgreementPaymentLinkSms({
+          tenantId,
+          debtCaseId: debtCase.id,
+          debtor: debtCase.debtor,
+          paymentLinkUrl: attributedLink,
+          tenantName: tenantDisplayName,
+          automationId: resolvedAutomationId,
+          agreementId: agreement.id,
+        })
+      );
+    }
+  }
+
+  const successfulDeliveries = deliveryResults.filter((result) => result.ok);
+  const failedDeliveries = deliveryResults.filter((result) => !result.ok);
+  const primarySuccessfulChannel = successfulDeliveries[0]?.channel || null;
+  const speakBack = primarySuccessfulChannel
+    ? `Perfect. I just sent your secure payment link by ${primarySuccessfulChannel}. Please confirm you received it.`
+    : 'Perfect. Your agreement is registered and your secure payment link is ready. I can resend it by email or SMS.';
 
   return {
     ok: true,
     agreement_id: agreement.id,
     payment_link_url: paymentLinkUrl,
-    email_sent: Boolean(debtCase.debtor?.email),
+    email_sent: successfulDeliveries.some((d) => d.channel === 'email'),
+    sms_sent: successfulDeliveries.some((d) => d.channel === 'sms'),
+    link_delivery: {
+      requested_channel: requestedChannel,
+      attempted_channels: deliveryChannels,
+      successful_channels: successfulDeliveries.map((d) => d.channel),
+      failed_channels: failedDeliveries.map((d) => ({
+        channel: d.channel,
+        reason: d.reason || null,
+      })),
+    },
     case_status: caseStatus,
-    speak_back:
-      'Perfect. I sent your secure payment link to your email so you can complete the payment.',
+    speak_back: speakBack,
   };
 };
