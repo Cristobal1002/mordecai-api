@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { CaseAutomationState, PmsConnection, DebtCase, Debtor, PmsLease, CaseDispute, CollectionEvent, CollectionStage } from '../../models/index.js';
+import { CaseAutomationState, PmsConnection, DebtCase, Debtor, PmsLease, CaseDispute, CollectionEvent, CollectionStage, InteractionLog } from '../../models/index.js';
 import { automationRepository } from './automation.repository.js';
 import {
   addCaseActionJob,
@@ -575,8 +575,13 @@ export const automationService = {
     const automation = await automationRepository.findById(automationId, tenantId);
     if (!automation) throw new NotFoundError('Automation');
 
-    const [events, debtCaseRow] = await Promise.all([
+    const [events, interactionLogs, debtCaseRow] = await Promise.all([
       automationRepository.findCaseTimeline(automationId, debtCaseId),
+      InteractionLog.findAll({
+        where: { tenantId, debtCaseId, type: 'CALL' },
+        order: [['createdAt', 'ASC']],
+        limit: 50,
+      }),
       DebtCase.findByPk(debtCaseId, {
         include: [
           { model: Debtor, as: 'debtor', attributes: ['id', 'fullName', 'email', 'phone'] },
@@ -603,8 +608,44 @@ export const automationService = {
           leaseNumber,
         }
         : null,
-      events: events.map((e) => {
-        const plain = e.get ? e.get({ plain: true }) : e;
+      events: [
+        ...events.map((e) => {
+          const plain = e.get ? e.get({ plain: true }) : e;
+          return {
+            id: plain.id,
+            channel: plain.channel,
+            eventType: plain.eventType,
+            payload: plain.payload,
+            createdAt: plain.createdAt,
+          };
+        }),
+        ...interactionLogs.map((log) => {
+          const plain = log.get ? log.get({ plain: true }) : log;
+          const callEventType =
+            plain.status === 'failed'
+              ? 'call_failed'
+              : plain.status === 'completed'
+                ? 'call_completed'
+                : plain.status === 'in_progress'
+                  ? 'call_in_progress'
+                  : 'call_queued';
+          return {
+            id: `interaction-${plain.id}`,
+            channel: 'call',
+            eventType: callEventType,
+            payload: {
+              interactionLogId: plain.id,
+              providerRef: plain.providerRef ?? null,
+              status: plain.status,
+              outcome: plain.outcome ?? null,
+              summary: plain.summary ?? null,
+              error: plain.error ?? null,
+              s3Key: plain.aiData?.eleven?.s3_key ?? null,
+            },
+            createdAt: plain.createdAt,
+          };
+        }),
+      ].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).map((plain) => {
         return {
           id: plain.id,
           channel: plain.channel,

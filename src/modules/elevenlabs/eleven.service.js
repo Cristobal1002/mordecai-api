@@ -9,6 +9,7 @@ import {
   Tenant,
 } from '../../models/index.js';
 import { resolvePolicyForCase } from '../collections/policy-resolver.service.js';
+import { buildPaymentInstructions } from '../pay/payment-instructions.service.js';
 import { logger } from '../../utils/logger.js';
 import { registerTwilioCallInElevenLabs } from './eleven.client.js';
 
@@ -31,6 +32,10 @@ const centsToDisplayAmount = (amountCents) => {
 };
 
 const PAYMENT_OPTION_LABELS = {
+  FULL: 'full amount in one payment',
+  HALF: 'percentage payment now and remainder later',
+  INSTALLMENTS: 'installments plan',
+  INSTALLMENTS_4: 'up to 4 installments with minimum upfront',
   full: 'full amount in one payment',
   half: '50% now and remainder later',
   installments_4: 'up to 4 installments with minimum 25% upfront',
@@ -40,7 +45,9 @@ const PAYMENT_CHANNEL_LABELS = {
   link: 'payment link',
   card: 'debit/credit card',
   transfer: 'bank transfer',
+  zelle: 'zelle',
   cash: 'cash (physical point)',
+  check: 'check (mail/drop-off)',
 };
 
 const toDateOnly = (value) => {
@@ -110,6 +117,45 @@ const normalizeSelectionValues = (value, labelsMap = {}) => {
     ids: ids.join(','),
     human: human.join(', '),
   };
+};
+
+const normalizePlanCodes = (value) => {
+  const list = Array.isArray(value) ? value : [];
+  return list
+    .map((item) => String(item).toUpperCase())
+    .filter(Boolean);
+};
+
+const normalizeChannelCodes = (value) => {
+  const list = Array.isArray(value) ? value : [];
+  return list
+    .map((item) => String(item).toLowerCase())
+    .filter(Boolean);
+};
+
+const truncateString = (value, maxLength = 4000) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 3)}...`;
+};
+
+const buildPaymentInstructionSummary = (instructions = []) => {
+  const chunks = [];
+  for (const channel of instructions) {
+    const channelParts = [];
+    if (channel.reference?.value) {
+      channelParts.push(`${channel.reference.label || 'Reference'}: ${channel.reference.value}`);
+    }
+    const fields = Array.isArray(channel.fields) ? channel.fields : [];
+    for (const field of fields.slice(0, 8)) {
+      if (!field?.label || !field?.value) continue;
+      channelParts.push(`${field.label}: ${field.value}`);
+    }
+    if (channelParts.length === 0) continue;
+    chunks.push(`${channel.label || channel.code}: ${channelParts.join('; ')}`);
+  }
+  return truncateString(chunks.join(' | '), 5000);
 };
 
 const buildCaseMetadataDynamicVariables = (meta = {}) => {
@@ -311,9 +357,36 @@ export const registerCallForInteraction = async ({
 
   const resolvedPolicy = await resolvePolicyForCase(interaction.tenantId, debtCase);
   const flowRules = getRulesFromResolvedPolicy(resolvedPolicy);
+  const allowedPlanCodes = normalizePlanCodes(resolvedPolicy?.rules?.allowed_plans);
+  const allowedPaymentChannelCodes = normalizeChannelCodes(
+    resolvedPolicy?.rules?.payment_channels
+  );
   const tenant = await Tenant.findByPk(interaction.tenantId, {
     attributes: ['id', 'name'],
   });
+
+  const paymentInstructions = await buildPaymentInstructions({
+    tenantId: interaction.tenantId,
+    debtCaseId: debtCase.id,
+    casePublicId: debtCase.casePublicId ?? debtCase.case_public_id ?? '',
+    debtorId: debtor.id,
+    pmsLeaseId: debtCase.pmsLeaseId ?? debtCase.pms_lease_id ?? null,
+  });
+
+  const filteredPaymentInstructions =
+    allowedPaymentChannelCodes.length > 0
+      ? paymentInstructions.filter((item) =>
+          allowedPaymentChannelCodes.includes(String(item.code || '').toLowerCase())
+        )
+      : paymentInstructions;
+
+  const paymentInstructionsSummary = buildPaymentInstructionSummary(
+    filteredPaymentInstructions
+  );
+  const paymentInstructionsJson = truncateString(
+    JSON.stringify(filteredPaymentInstructions),
+    4000
+  );
 
   const customInstructions = resolvedPolicy?.rules?.custom_instructions ?? '';
   const openingMessageFromRules = resolvedPolicy?.rules?.opening_message ?? '';
@@ -342,10 +415,23 @@ export const registerCallForInteraction = async ({
     );
   }
 
-  const fallbackOpeningMessage = `Hi ${debtor.fullName}, I'm Ivanna from ${tenantDisplayName}. I'm calling about your ${centsToDisplayAmount(
-    debtCase.amountDueCents
-  )} dollar balance. Is now a good time to review payment options?`;
+  const complianceInstructions = [
+    'Before disclosing any balance or payment details, verify you are speaking with the intended debtor.',
+    `Ask: "Am I speaking with ${debtor.fullName}?"`,
+    'If identity is not confirmed, do not disclose debt information and politely end the call or request callback with the debtor.',
+  ].join(' ');
+
+  const fallbackOpeningMessage = `Hi, this is Ivanna from ${tenantDisplayName}. For privacy, I can only discuss account details with the account holder. Am I speaking with ${debtor.fullName}?`;
   const resolvedOpeningMessage = openingMessage || fallbackOpeningMessage;
+
+  const allowedPlanSelection = normalizeSelectionValues(
+    allowedPlanCodes,
+    PAYMENT_OPTION_LABELS
+  );
+  const allowedChannelSelection = normalizeSelectionValues(
+    allowedPaymentChannelCodes,
+    PAYMENT_CHANNEL_LABELS
+  );
 
   const dynamicVariables = {
     tenant_id: String(interaction.tenantId),
@@ -357,9 +443,31 @@ export const registerCallForInteraction = async ({
     balance_amount: centsToDisplayAmount(debtCase.amountDueCents),
     currency: debtCase.currency || 'USD',
     call_sid: twilioCallSid || '',
+    stage_name: resolvedPolicy?.stage?.name || '',
+    stage_tone: resolvedPolicy?.stage?.tone || resolvedPolicy?.tone || 'professional',
+    stage_min_days_past_due:
+      resolvedPolicy?.stage?.minDaysPastDue != null
+        ? String(resolvedPolicy.stage.minDaysPastDue)
+        : '',
+    stage_max_days_past_due:
+      resolvedPolicy?.stage?.maxDaysPastDue != null
+        ? String(resolvedPolicy.stage.maxDaysPastDue)
+        : '',
+    allowed_plans:
+      allowedPlanSelection.ids || String(flowRules.allowedPlanTypes.join(',')),
+    allowed_plans_human: allowedPlanSelection.human,
+    allowed_payment_channels:
+      allowedChannelSelection.ids ||
+      String(allowedPaymentChannelCodes.join(',')),
+    allowed_payment_channels_human: allowedChannelSelection.human,
+    payment_channels_context: paymentInstructionsSummary,
+    payment_channels_context_json: paymentInstructionsJson,
     max_installments: String(flowRules.maxInstallments),
     min_upfront_pct: String(flowRules.minUpfrontPct),
+    half_pct: String(flowRules.halfPct),
     custom_instructions: String(customInstructions || '').slice(0, 2000),
+    compliance_instructions: complianceInstructions,
+    identity_verification_required: 'true',
     opening_message: resolvedOpeningMessage,
     initial_message: resolvedOpeningMessage,
     tenant_name: tenantDisplayName,

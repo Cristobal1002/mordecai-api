@@ -16,6 +16,7 @@ const DEFAULT_POLICY = {
   channels: { sms: false, email: false, call: false, whatsapp: false },
   tone: 'professional',
   rules: {},
+  stage: null,
 };
 
 /** System default rules when none are set (contract: channels, tone, rules). */
@@ -102,6 +103,7 @@ export async function resolvePolicyForCase(tenantId, debtCase) {
       channels: plain.channels ?? DEFAULT_POLICY.channels,
       tone: plain.tone ?? DEFAULT_POLICY.tone,
       rules: normalizeRules(plain.rules),
+      stage: null,
     };
   }
 
@@ -151,5 +153,13 @@ export async function resolvePolicyForCase(tenantId, debtCase) {
     channels: stage.channels ?? DEFAULT_POLICY.channels,
     tone: stage.tone ?? DEFAULT_POLICY.tone,
     rules: normalizeRules(merged),
+    stage: {
+      id: stage.id,
+      name: stage.name,
+      minDaysPastDue: stage.minDaysPastDue,
+      maxDaysPastDue: stage.maxDaysPastDue,
+      tone: stage.tone ?? DEFAULT_POLICY.tone,
+      channels: stage.channels ?? DEFAULT_POLICY.channels,
+    },
   };
 }
