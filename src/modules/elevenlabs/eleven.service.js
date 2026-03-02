@@ -107,21 +107,6 @@ const normalizeEmailCandidate = (value) => {
   return isValidEmail(email) ? email : null;
 };
 
-const looksMaskedEmail = (value) => {
-  const email = String(value || '').trim();
-  return email.includes('*') && email.includes('@');
-};
-
-const maskEmail = (value) => {
-  const email = normalizeEmailCandidate(value);
-  if (!email) return '';
-  const [local = '', domain = ''] = email.split('@');
-  if (!domain) return '';
-  const localMasked =
-    local.length <= 2 ? `${local.charAt(0) || ''}***` : `${local.slice(0, 2)}***`;
-  return `${localMasked}@${domain}`;
-};
-
 /**
  * Resolve or create a PaymentLink and return the URL.
  * URL format: {base}/p/{token} — does not expose agreement ID.
@@ -936,7 +921,6 @@ export const registerCallForInteraction = async ({
     interaction_id: String(interaction.id),
     customer_name: debtor.fullName,
     debtor_email: String(debtor.email || '').trim(),
-    debtor_email_masked: maskEmail(debtor.email),
     balance_amount_cents: String(debtCase.amountDueCents),
     balance_amount: centsToDisplayAmount(debtCase.amountDueCents),
     currency: debtCase.currency || 'USD',
@@ -1189,13 +1173,9 @@ export const createPaymentAgreementFromTool = async ({
       ''
   ).trim();
   const requestedDeliveryEmail = normalizeEmailCandidate(rawRequestedDeliveryEmail);
-  const shouldFallbackToDebtorEmail =
-    !requestedDeliveryEmail && looksMaskedEmail(rawRequestedDeliveryEmail);
   const effectiveDeliveryEmail =
     requestedDeliveryEmail ||
-    (!rawRequestedDeliveryEmail || shouldFallbackToDebtorEmail
-      ? normalizeEmailCandidate(debtCase.debtor?.email)
-      : null);
+    (!rawRequestedDeliveryEmail ? normalizeEmailCandidate(debtCase.debtor?.email) : null);
   const hasEmail = Boolean(effectiveDeliveryEmail);
   const hasPhone = Boolean(String(debtCase.debtor?.phone || '').trim());
   let deliveryChannels = [];
@@ -1260,16 +1240,15 @@ export const createPaymentAgreementFromTool = async ({
   const failedDeliveries = deliveryResults.filter((result) => !result.ok);
   const sentByEmail = successfulDeliveries.some((result) => result.channel === 'email');
   const sentBySms = successfulDeliveries.some((result) => result.channel === 'sms');
-  const maskedDeliveryEmail = maskEmail(effectiveDeliveryEmail);
   let speakBack =
     'Perfect. Your agreement is registered and your secure payment link is ready. I can resend it by email or SMS.';
   if (sentByEmail && sentBySms) {
-    speakBack = maskedDeliveryEmail
-      ? `Perfect. I sent your secure link by email to ${maskedDeliveryEmail} and by SMS. Please confirm you received it.`
+    speakBack = effectiveDeliveryEmail
+      ? `Perfect. I sent your secure link by email to ${effectiveDeliveryEmail} and by SMS. Please confirm you received it.`
       : 'Perfect. I sent your secure link by email and by SMS. Please confirm you received it.';
   } else if (sentByEmail) {
-    speakBack = maskedDeliveryEmail
-      ? `Perfect. I sent your secure link to ${maskedDeliveryEmail}. Please confirm you received it.`
+    speakBack = effectiveDeliveryEmail
+      ? `Perfect. I sent your secure link to ${effectiveDeliveryEmail}. Please confirm you received it.`
       : 'Perfect. I sent your secure link by email. Please confirm you received it.';
   } else if (sentBySms) {
     speakBack =
@@ -1286,7 +1265,7 @@ export const createPaymentAgreementFromTool = async ({
       requested_channel: requestedChannel,
       attempted_channels: deliveryChannels,
       successful_channels: successfulDeliveries.map((d) => d.channel),
-      email_masked: maskedDeliveryEmail || null,
+      email: effectiveDeliveryEmail || null,
       failed_channels: failedDeliveries.map((d) => ({
         channel: d.channel,
         reason: d.reason || null,
@@ -1390,13 +1369,9 @@ export const createDisputeFromTool = async ({
       ''
   ).trim();
   const requestedDeliveryEmail = normalizeEmailCandidate(rawRequestedDeliveryEmail);
-  const shouldFallbackToDebtorEmail =
-    !requestedDeliveryEmail && looksMaskedEmail(rawRequestedDeliveryEmail);
   const effectiveDeliveryEmail =
     requestedDeliveryEmail ||
-    (!rawRequestedDeliveryEmail || shouldFallbackToDebtorEmail
-      ? normalizeEmailCandidate(debtCase.debtor?.email)
-      : null);
+    (!rawRequestedDeliveryEmail ? normalizeEmailCandidate(debtCase.debtor?.email) : null);
   const hasEmail = Boolean(effectiveDeliveryEmail);
   const hasPhone = Boolean(String(debtCase.debtor?.phone || '').trim());
   let deliveryChannels = [];
@@ -1474,17 +1449,16 @@ export const createDisputeFromTool = async ({
   const failedDeliveries = deliveryResults.filter((result) => !result.ok);
   const sentByEmail = successfulDeliveries.some((result) => result.channel === 'email');
   const sentBySms = successfulDeliveries.some((result) => result.channel === 'sms');
-  const maskedDeliveryEmail = maskEmail(effectiveDeliveryEmail);
 
   let speakBack =
     'Understood. I registered your dispute and paused negotiation while the team reviews your case.';
   if (shouldSendLink && sentByEmail && sentBySms) {
-    speakBack = maskedDeliveryEmail
-      ? `Understood. I registered your dispute and sent your secure case link to ${maskedDeliveryEmail} and by SMS.`
+    speakBack = effectiveDeliveryEmail
+      ? `Understood. I registered your dispute and sent your secure case link to ${effectiveDeliveryEmail} and by SMS.`
       : 'Understood. I registered your dispute and sent your secure case link by email and SMS.';
   } else if (shouldSendLink && sentByEmail) {
-    speakBack = maskedDeliveryEmail
-      ? `Understood. I registered your dispute and sent your secure case link to ${maskedDeliveryEmail}.`
+    speakBack = effectiveDeliveryEmail
+      ? `Understood. I registered your dispute and sent your secure case link to ${effectiveDeliveryEmail}.`
       : 'Understood. I registered your dispute and sent your secure case link by email.';
   } else if (shouldSendLink && sentBySms) {
     speakBack =
@@ -1506,7 +1480,7 @@ export const createDisputeFromTool = async ({
       requested_channel: requestedChannel,
       attempted_channels: shouldSendLink ? deliveryChannels : [],
       successful_channels: successfulDeliveries.map((d) => d.channel),
-      email_masked: maskedDeliveryEmail || null,
+      email: effectiveDeliveryEmail || null,
       failed_channels: failedDeliveries.map((d) => ({
         channel: d.channel,
         reason: d.reason || null,
