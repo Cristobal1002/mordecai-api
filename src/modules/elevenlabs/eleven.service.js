@@ -107,6 +107,11 @@ const normalizeEmailCandidate = (value) => {
   return isValidEmail(email) ? email : null;
 };
 
+const looksMaskedEmail = (value) => {
+  const email = String(value || '').trim();
+  return email.includes('*') && email.includes('@');
+};
+
 const maskEmail = (value) => {
   const email = normalizeEmailCandidate(value);
   if (!email) return '';
@@ -130,14 +135,33 @@ const createPaymentLinkAndGetUrl = async ({ tenantId, debtCaseId, paymentAgreeme
 
 const parseAmountCents = (value) => {
   if (value === null || value === undefined) return null;
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return null;
 
-  // If the value is lower than 10000 and has decimals, assume dollars.
-  if (Math.abs(numeric) < 1000000 && !Number.isInteger(numeric)) {
+  // Number input: integers are treated as cents, decimals as currency units.
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return Number.isInteger(value) ? Math.round(value) : Math.round(value * 100);
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  // Keep digits, signs, comma and dot for flexible parsing from LLM payloads.
+  const cleaned = raw.replace(/[^\d,.\-]/g, '');
+  if (!cleaned) return null;
+
+  // Detect decimal style values like "525.00" or "525,50" => currency units.
+  const hasDecimalPart = /[.,]\d{1,2}$/.test(cleaned);
+  if (hasDecimalPart) {
+    const normalized = cleaned.replace(/,/g, '.');
+    const numeric = Number.parseFloat(normalized);
+    if (!Number.isFinite(numeric)) return null;
     return Math.round(numeric * 100);
   }
 
+  // Otherwise treat as cents (remove thousand separators).
+  const normalizedInteger = cleaned.replace(/[.,]/g, '');
+  const numeric = Number(normalizedInteger);
+  if (!Number.isFinite(numeric)) return null;
   return Math.round(numeric);
 };
 
@@ -621,6 +645,7 @@ const sendCaseLinkEmail = async ({
   debtCaseId,
   debtor,
   deliveryEmail,
+  deliveryEmailRaw = null,
   paymentLinkUrl,
   tenantName,
   automationId,
@@ -639,7 +664,12 @@ const sendCaseLinkEmail = async ({
   const failedEventType =
     context === 'dispute' ? 'dispute_link_failed' : 'payment_link_failed';
 
-  const to = normalizeEmailCandidate(deliveryEmail) || normalizeEmailCandidate(debtor?.email);
+  const hasRawDeliveryEmail =
+    typeof deliveryEmailRaw === 'string' && deliveryEmailRaw.trim().length > 0;
+  const toFromDelivery = normalizeEmailCandidate(deliveryEmail);
+  const toFromDebtor = hasRawDeliveryEmail ? null : normalizeEmailCandidate(debtor?.email);
+  const to = toFromDelivery || toFromDebtor;
+
   if (!to) {
     await createCollectionEvent({
       automationId,
@@ -647,14 +677,14 @@ const sendCaseLinkEmail = async ({
       channel: 'email',
       eventType: failedEventType,
       payload: {
-        reason: deliveryEmail ? 'invalid_delivery_email' : 'missing_email',
+        reason: hasRawDeliveryEmail ? 'invalid_delivery_email' : 'missing_email',
         [entityKey]: entityValue,
       },
     });
     return {
       ok: false,
       channel: 'email',
-      reason: deliveryEmail ? 'invalid_delivery_email' : 'missing_email',
+      reason: hasRawDeliveryEmail ? 'invalid_delivery_email' : 'missing_email',
     };
   }
 
@@ -1150,15 +1180,22 @@ export const createPaymentAgreementFromTool = async ({
   });
 
   const requestedChannel = resolvePreferredDeliveryChannel(proposal);
-  const requestedDeliveryEmail = normalizeEmailCandidate(
+  const rawRequestedDeliveryEmail = String(
     proposal?.delivery_email ||
       proposal?.deliveryEmail ||
       proposal?.email ||
       proposal?.recipient_email ||
-      proposal?.recipientEmail
-  );
+      proposal?.recipientEmail ||
+      ''
+  ).trim();
+  const requestedDeliveryEmail = normalizeEmailCandidate(rawRequestedDeliveryEmail);
+  const shouldFallbackToDebtorEmail =
+    !requestedDeliveryEmail && looksMaskedEmail(rawRequestedDeliveryEmail);
   const effectiveDeliveryEmail =
-    requestedDeliveryEmail || normalizeEmailCandidate(debtCase.debtor?.email);
+    requestedDeliveryEmail ||
+    (!rawRequestedDeliveryEmail || shouldFallbackToDebtorEmail
+      ? normalizeEmailCandidate(debtCase.debtor?.email)
+      : null);
   const hasEmail = Boolean(effectiveDeliveryEmail);
   const hasPhone = Boolean(String(debtCase.debtor?.phone || '').trim());
   let deliveryChannels = [];
@@ -1192,6 +1229,7 @@ export const createPaymentAgreementFromTool = async ({
           debtCaseId: debtCase.id,
           debtor: debtCase.debtor,
           deliveryEmail: effectiveDeliveryEmail,
+          deliveryEmailRaw: rawRequestedDeliveryEmail || null,
           paymentLinkUrl: attributedLink,
           tenantName: tenantDisplayName,
           automationId: resolvedAutomationId,
@@ -1343,15 +1381,22 @@ export const createDisputeFromTool = async ({
   });
 
   const requestedChannel = resolvePreferredDeliveryChannel(proposal);
-  const requestedDeliveryEmail = normalizeEmailCandidate(
+  const rawRequestedDeliveryEmail = String(
     proposal?.delivery_email ||
       proposal?.deliveryEmail ||
       proposal?.email ||
       proposal?.recipient_email ||
-      proposal?.recipientEmail
-  );
+      proposal?.recipientEmail ||
+      ''
+  ).trim();
+  const requestedDeliveryEmail = normalizeEmailCandidate(rawRequestedDeliveryEmail);
+  const shouldFallbackToDebtorEmail =
+    !requestedDeliveryEmail && looksMaskedEmail(rawRequestedDeliveryEmail);
   const effectiveDeliveryEmail =
-    requestedDeliveryEmail || normalizeEmailCandidate(debtCase.debtor?.email);
+    requestedDeliveryEmail ||
+    (!rawRequestedDeliveryEmail || shouldFallbackToDebtorEmail
+      ? normalizeEmailCandidate(debtCase.debtor?.email)
+      : null);
   const hasEmail = Boolean(effectiveDeliveryEmail);
   const hasPhone = Boolean(String(debtCase.debtor?.phone || '').trim());
   let deliveryChannels = [];
@@ -1396,6 +1441,7 @@ export const createDisputeFromTool = async ({
             debtCaseId: debtCase.id,
             debtor: debtCase.debtor,
             deliveryEmail: effectiveDeliveryEmail,
+            deliveryEmailRaw: rawRequestedDeliveryEmail || null,
             paymentLinkUrl: attributedLink,
             tenantName: tenantDisplayName,
             automationId: resolvedAutomationId,

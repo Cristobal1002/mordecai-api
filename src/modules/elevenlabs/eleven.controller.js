@@ -141,6 +141,18 @@ export const elevenController = {
           parsedPayload.proposal?.plan_type ||
           parsedPayload.proposal?.planType ||
           null,
+        deliveryChannel:
+          parsedPayload.proposal?.delivery_channel ||
+          parsedPayload.proposal?.deliveryChannel ||
+          null,
+        upfrontAmountCents:
+          parsedPayload.proposal?.upfront_amount_cents ||
+          parsedPayload.proposal?.upfrontAmountCents ||
+          null,
+        installmentsCount:
+          parsedPayload.proposal?.installments_count ||
+          parsedPayload.proposal?.installmentsCount ||
+          null,
       },
       'Incoming ElevenLabs create-payment-agreement tool call'
     );
@@ -159,6 +171,8 @@ export const elevenController = {
         code: result?.code || null,
         agreementId: result?.agreement_id || null,
         caseStatus: result?.case_status || null,
+        emailSent: result?.email_sent === true,
+        smsSent: result?.sms_sent === true,
       },
       'Completed ElevenLabs create-payment-agreement tool call'
     );
