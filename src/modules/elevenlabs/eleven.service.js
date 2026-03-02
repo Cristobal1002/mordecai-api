@@ -108,6 +108,26 @@ const normalizeEmailCandidate = (value) => {
   return isValidEmail(email) ? email : null;
 };
 
+const resolveTenantDisplayNameForDelivery = async ({
+  tenantId,
+  debtCase,
+  resolvedPolicy = null,
+}) => {
+  const fromMeta = String(
+    debtCase?.meta?.tenant_display_name || debtCase?.meta?.tenant_name || ''
+  ).trim();
+  if (fromMeta) return fromMeta.slice(0, 200);
+
+  const fromRules = String(resolvedPolicy?.rules?.tenant_display_name || '').trim();
+  if (fromRules) return fromRules.slice(0, 200);
+
+  const tenant = await Tenant.findByPk(tenantId, { attributes: ['name'] });
+  const fromTenant = String(tenant?.name || '').trim();
+  if (fromTenant) return fromTenant.slice(0, 200);
+
+  return 'Collections';
+};
+
 /**
  * Resolve or create a PaymentLink and return the URL.
  * URL format: {base}/p/{token} — does not expose agreement ID.
@@ -1141,9 +1161,11 @@ export const createPaymentAgreementFromTool = async ({
     deliveryChannels = hasEmail ? ['email'] : hasPhone ? ['sms'] : [];
   }
 
-  const tenantDisplayName = String(
-    debtCase.meta?.tenant_display_name || debtCase.meta?.tenant_name || 'Mordecai'
-  );
+  const tenantDisplayName = await resolveTenantDisplayNameForDelivery({
+    tenantId,
+    debtCase,
+    resolvedPolicy,
+  });
   const deliveryResults = [];
 
   for (const channel of deliveryChannels) {
@@ -1343,9 +1365,10 @@ export const createDisputeFromTool = async ({
     paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
   });
 
-  const tenantDisplayName = String(
-    debtCase.meta?.tenant_display_name || debtCase.meta?.tenant_name || 'Mordecai'
-  );
+  const tenantDisplayName = await resolveTenantDisplayNameForDelivery({
+    tenantId,
+    debtCase,
+  });
   const shouldSendLink = parseBoolean(
     proposal?.send_link || proposal?.sendLink || proposal?.include_link,
     true
