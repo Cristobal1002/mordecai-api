@@ -568,7 +568,56 @@ export const automationService = {
       byDay.get(d).events.push(ev);
     }
     const sortedDays = [...byDay.entries()].sort((a, b) => (b[0] > a[0] ? 1 : -1));
-    return { groupBy: 'day', groups: sortedDays.map(([, g]) => g) };
+    const groups = sortedDays.map(([, g]) => {
+      const byCase = new Map();
+      for (const ev of g.events) {
+        const key = ev.debtCaseId || `unknown-${ev.id}`;
+        if (!byCase.has(key)) {
+          byCase.set(key, {
+            debtCaseId: ev.debtCaseId,
+            casePublicId: ev.casePublicId,
+            debtorName: ev.debtorName,
+            leaseNumber: ev.leaseNumber,
+            amountDueCents: ev.amountDueCents,
+            currency: ev.currency,
+            daysPastDue: ev.daysPastDue,
+            events: [],
+          });
+        }
+        byCase.get(key).events.push(ev);
+      }
+
+      const cases = [...byCase.values()].map((c) => {
+        const orderedEvents = c.events.sort(
+          (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+        );
+        const eventTypeCounts = orderedEvents.reduce((acc, ev) => {
+          acc[ev.eventType] = (acc[ev.eventType] || 0) + 1;
+          return acc;
+        }, {});
+        const channels = [...new Set(orderedEvents.map((ev) => ev.channel).filter(Boolean))];
+        return {
+          ...c,
+          totalEvents: orderedEvents.length,
+          channels,
+          eventTypeCounts,
+          lastEvent: orderedEvents[0] || null,
+          events: orderedEvents,
+        };
+      });
+
+      return {
+        ...g,
+        events: g.events.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+        cases: cases.sort((a, b) => {
+          const at = a.lastEvent?.createdAt || '';
+          const bt = b.lastEvent?.createdAt || '';
+          return new Date(bt) - new Date(at);
+        }),
+      };
+    });
+
+    return { groupBy: 'day', groups };
   },
 
   getCaseTimeline: async (tenantId, automationId, debtCaseId) => {
