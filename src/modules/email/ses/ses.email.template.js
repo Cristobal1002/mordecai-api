@@ -118,6 +118,16 @@ const resolveTemplateName = (stageRules = {}) => {
   return String(customName || TEMPLATE_KEY).trim() || 'collection-default';
 };
 
+const ELEVEN_TEMPLATE_FALLBACK = {
+  agreement: process.env.SES_ELEVEN_AGREEMENT_TEMPLATE || 'eleven-agreement-link',
+  dispute: process.env.SES_ELEVEN_DISPUTE_TEMPLATE || 'eleven-dispute-link',
+};
+
+const resolveElevenTemplateName = (context = 'agreement') => {
+  const normalized = String(context || 'agreement').toLowerCase();
+  return ELEVEN_TEMPLATE_FALLBACK[normalized] || ELEVEN_TEMPLATE_FALLBACK.agreement;
+};
+
 export const buildCollectionEmailVariables = ({
   debtCase,
   debtor,
@@ -149,6 +159,28 @@ export const buildCollectionEmailVariables = ({
     lease_number: meta.lease_number || meta.leaseNumber || meta.lease_id || '',
     ...custom,
   };
+};
+
+export const renderElevenLinkEmail = ({
+  context = 'agreement',
+  tenantName,
+  debtorName,
+  paymentLinkUrl,
+  custom = {},
+}) => {
+  const templateName = resolveElevenTemplateName(context);
+  const variables = {
+    tenant_name: tenantName || 'Collections',
+    debtor_name: debtorName || 'there',
+    payment_link: paymentLinkUrl || '',
+    ...custom,
+  };
+
+  const subject = renderFileText(`collections/${templateName}.subject.njk`, variables);
+  const html = renderFileHtml(`collections/${templateName}.html.njk`, variables);
+  const text = renderFileText(`collections/${templateName}.txt.njk`, variables);
+
+  return { subject, html, text, templateName, variables };
 };
 
 export const renderCollectionEmail = ({

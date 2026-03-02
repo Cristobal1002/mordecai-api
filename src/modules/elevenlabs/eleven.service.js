@@ -17,6 +17,7 @@ import {
   getOrCreatePaymentLinkUrl,
 } from '../pay/payment-link-resolver.service.js';
 import { sendSesEmail } from '../email/ses/ses.email.client.js';
+import { renderElevenLinkEmail } from '../email/ses/ses.email.template.js';
 import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
 import { logger } from '../../utils/logger.js';
 import { registerTwilioCallInElevenLabs } from './eleven.client.js';
@@ -469,53 +470,9 @@ const buildAgreementSmsBody = ({ debtorName, tenantName, paymentLinkUrl }) =>
   `Hi ${debtorName}, thanks for speaking with ${tenantName}. ` +
   `Here is your secure case link to complete payment or upload dispute evidence: ${paymentLinkUrl}`;
 
-const buildAgreementEmailSubject = (tenantName) =>
-  `${tenantName} - Your secure payment link`;
-
-const buildAgreementEmailText = ({ debtorName, tenantName, paymentLinkUrl }) =>
-  [
-    `Hello ${debtorName},`,
-    '',
-    `Thanks for speaking with ${tenantName}.`,
-    'Use your secure case link below to review your account, complete payment, or upload dispute evidence:',
-    paymentLinkUrl,
-    '',
-    'If you need help, reply to this email.',
-  ].join('\n');
-
-const buildAgreementEmailHtml = ({ debtorName, tenantName, paymentLinkUrl }) => `
-  <p>Hello ${debtorName},</p>
-  <p>Thanks for speaking with ${tenantName}.</p>
-  <p>Use your secure case link below to review your account, complete payment, or upload dispute evidence:</p>
-  <p><a href="${paymentLinkUrl}">${paymentLinkUrl}</a></p>
-  <p>If you need help, reply to this email.</p>
-`;
-
 const buildDisputeSmsBody = ({ debtorName, tenantName, paymentLinkUrl }) =>
   `Hi ${debtorName}, we registered your dispute with ${tenantName}. ` +
   `Use this secure link to upload evidence and track updates: ${paymentLinkUrl}`;
-
-const buildDisputeEmailSubject = (tenantName) =>
-  `${tenantName} - Your dispute was registered`;
-
-const buildDisputeEmailText = ({ debtorName, tenantName, paymentLinkUrl }) =>
-  [
-    `Hello ${debtorName},`,
-    '',
-    `We registered your dispute with ${tenantName}.`,
-    'Use your secure case link below to upload evidence and follow the dispute status:',
-    paymentLinkUrl,
-    '',
-    'If you need help, reply to this email.',
-  ].join('\n');
-
-const buildDisputeEmailHtml = ({ debtorName, tenantName, paymentLinkUrl }) => `
-  <p>Hello ${debtorName},</p>
-  <p>We registered your dispute with ${tenantName}.</p>
-  <p>Use your secure case link below to upload evidence and follow the dispute status:</p>
-  <p><a href="${paymentLinkUrl}">${paymentLinkUrl}</a></p>
-  <p>If you need help, reply to this email.</p>
-`;
 
 const sendCaseLinkSms = async ({
   tenantId,
@@ -640,10 +597,6 @@ const sendCaseLinkEmail = async ({
 }) => {
   const entityKey = context === 'dispute' ? 'dispute_id' : 'agreement_id';
   const entityValue = context === 'dispute' ? disputeId : agreementId;
-  const subjectBuilder =
-    context === 'dispute' ? buildDisputeEmailSubject : buildAgreementEmailSubject;
-  const textBuilder = context === 'dispute' ? buildDisputeEmailText : buildAgreementEmailText;
-  const htmlBuilder = context === 'dispute' ? buildDisputeEmailHtml : buildAgreementEmailHtml;
   const successEventType =
     context === 'dispute' ? 'dispute_link_sent' : 'payment_link_sent';
   const failedEventType =
@@ -673,17 +626,15 @@ const sendCaseLinkEmail = async ({
     };
   }
 
-  const subject = subjectBuilder(tenantName);
-  const text = textBuilder({
+  const rendered = renderElevenLinkEmail({
+    context: context === 'dispute' ? 'dispute' : 'agreement',
     debtorName: debtor.fullName || 'there',
     tenantName,
     paymentLinkUrl,
   });
-  const html = htmlBuilder({
-    debtorName: debtor.fullName || 'there',
-    tenantName,
-    paymentLinkUrl,
-  });
+  const subject = rendered.subject;
+  const text = rendered.text;
+  const html = rendered.html;
 
   try {
     const sesTags = [
