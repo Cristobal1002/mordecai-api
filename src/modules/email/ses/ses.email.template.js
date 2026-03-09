@@ -108,6 +108,13 @@ const plainTextToHtml = (value) => {
     .join('\n');
 };
 
+const looksLikeHtmlTemplate = (value) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return false;
+  // Basic heuristic: template contains at least one HTML tag.
+  return /<[^>]+>/.test(normalized);
+};
+
 const resolveTemplateName = (stageRules = {}) => {
   const customName =
     stageRules.email_template_key ||
@@ -199,24 +206,32 @@ export const renderCollectionEmail = ({
   const templateText = messageTemplate?.bodyText || null;
   const templateHtml = messageTemplate?.bodyHtml || null;
 
+  // Some tenants store plain text in bodyHtml from UI; in that case we should
+  // still render inside the branded HTML layout instead of sending bare text.
+  const normalizedTemplateHtml = looksLikeHtmlTemplate(templateHtml) ? templateHtml : null;
+  const normalizedTemplateText =
+    templateText || (!normalizedTemplateHtml ? templateHtml : null);
+
   const subjectTemplate =
     templateSubject ||
     stageRules.email_subject_template ||
     stageRules.emailSubjectTemplate ||
     null;
   const htmlTemplate =
-    templateHtml ||
+    normalizedTemplateHtml ||
     stageRules.email_html_template ||
     stageRules.emailHtmlTemplate ||
     null;
   const textTemplate =
-    templateText ||
+    normalizedTemplateText ||
     stageRules.email_text_template ||
     stageRules.emailTextTemplate ||
     null;
 
-  const hasTenantTemplate = Boolean(templateText || templateHtml);
-  const renderedTemplateText = renderStringText(templateText, variables, { multiline: true });
+  const hasTenantTemplate = Boolean(normalizedTemplateText || normalizedTemplateHtml);
+  const renderedTemplateText = renderStringText(normalizedTemplateText, variables, {
+    multiline: true,
+  });
 
   const subject = renderStringText(subjectTemplate, variables)
     || (hasTenantTemplate ? `Payment reminder from ${variables.tenant_name || 'your collections team'}` : null)
