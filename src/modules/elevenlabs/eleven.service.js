@@ -459,6 +459,25 @@ const createCollectionEvent = async ({
   });
 };
 
+const createCallToolEvent = async ({
+  debtCaseId,
+  automationId,
+  eventType,
+  payload = {},
+}) => {
+  const resolvedAutomationId = await resolveAutomationIdForCase({
+    debtCaseId,
+    automationId,
+  });
+  return createCollectionEvent({
+    automationId: resolvedAutomationId,
+    debtCaseId,
+    channel: 'call',
+    eventType,
+    payload,
+  });
+};
+
 const AGREEMENT_ALLOWED_FSM_STATES = new Set([
   CALL_STATES.CONFIRM_AGREEMENT,
   CALL_STATES.EXECUTE_AGREEMENT,
@@ -469,10 +488,66 @@ const DISPUTE_ALLOWED_FSM_STATES = new Set([
   CALL_STATES.EXECUTE_DISPUTE,
 ]);
 
+const CALL_STALE_TTL_SECONDS = Number(process.env.CALL_STALE_TTL_SECONDS) || 1800;
+
+const isStaleActiveCallInteraction = (interaction) => {
+  if (!interaction) return false;
+  if (!['queued', 'in_progress'].includes(String(interaction.status || '').toLowerCase())) {
+    return false;
+  }
+
+  const referenceDate = interaction.updatedAt || interaction.startedAt || interaction.createdAt;
+  const referenceMs = referenceDate ? new Date(referenceDate).getTime() : NaN;
+  if (!Number.isFinite(referenceMs)) return false;
+  return Date.now() - referenceMs > CALL_STALE_TTL_SECONDS * 1000;
+};
+
+const closeStaleCallInteraction = async (interaction, reason = 'stale_call_interaction') => {
+  if (!interaction || !isStaleActiveCallInteraction(interaction)) return interaction;
+
+  await interaction.update({
+    status: 'failed',
+    outcome: 'FAILED',
+    endedAt: interaction.endedAt || new Date(),
+    error: {
+      ...(interaction.error || {}),
+      message: reason,
+    },
+    aiData: {
+      ...(interaction.aiData || {}),
+      eleven: {
+        ...(interaction.aiData?.eleven || {}),
+        call_state: {
+          ...(interaction.aiData?.eleven?.call_state || {}),
+          previous_state:
+            interaction.aiData?.eleven?.call_state?.state || CALL_STATES.VERIFY_IDENTITY,
+          state: CALL_STATES.CLOSE,
+          last_action: CALL_ACTIONS.END_CALL,
+          last_tool_code: reason,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    },
+  });
+
+  logger.warn(
+    {
+      interactionId: interaction.id,
+      debtCaseId: interaction.debtCaseId,
+      status: interaction.status,
+      reason,
+      ttlSeconds: CALL_STALE_TTL_SECONDS,
+    },
+    'Auto-closed stale active call interaction'
+  );
+
+  return interaction;
+};
+
 const resolveToolInteractionContext = async ({ tenantId, caseId, interactionId }) => {
   const byId = normalizeUuid(interactionId);
   if (byId) {
-    return InteractionLog.findOne({
+    const interaction = await InteractionLog.findOne({
       where: {
         id: byId,
         tenantId,
@@ -481,9 +556,10 @@ const resolveToolInteractionContext = async ({ tenantId, caseId, interactionId }
       },
       include: [{ model: DebtCase, as: 'debtCase' }],
     });
+    return closeStaleCallInteraction(interaction, 'stale_call_interaction_by_id');
   }
 
-  return InteractionLog.findOne({
+  const latestInteraction = await InteractionLog.findOne({
     where: {
       tenantId,
       debtCaseId: caseId,
@@ -493,6 +569,7 @@ const resolveToolInteractionContext = async ({ tenantId, caseId, interactionId }
     include: [{ model: DebtCase, as: 'debtCase' }],
     order: [['updatedAt', 'DESC']],
   });
+  return closeStaleCallInteraction(latestInteraction, 'stale_call_interaction_latest');
 };
 
 const resolveCallStateFromInteraction = (interaction) =>
@@ -563,6 +640,41 @@ const findExistingAgreementByInteraction = async ({
     },
     order: [['createdAt', 'DESC']],
   });
+};
+
+export const getCallStateSnapshot = async ({ tenantId, caseId, interactionId }) => {
+  const interaction = await resolveToolInteractionContext({
+    tenantId,
+    caseId,
+    interactionId,
+  });
+
+  if (!interaction) {
+    return {
+      ok: false,
+      code: 'INTERACTION_NOT_FOUND',
+      message: 'No call interaction found for this context.',
+    };
+  }
+
+  const callState = interaction.aiData?.eleven?.call_state || null;
+  return {
+    ok: true,
+    interaction_id: interaction.id,
+    debt_case_id: interaction.debtCaseId,
+    tenant_id: interaction.tenantId,
+    status: interaction.status,
+    provider_ref: interaction.providerRef || null,
+    current_state: normalizeCallState(callState?.state) || CALL_STATES.VERIFY_IDENTITY,
+    previous_state: normalizeCallState(callState?.previous_state) || null,
+    last_intent: callState?.last_intent || null,
+    last_action: callState?.last_action || null,
+    last_tool: callState?.last_tool || null,
+    last_tool_ok:
+      typeof callState?.last_tool_ok === 'boolean' ? callState.last_tool_ok : null,
+    last_tool_code: callState?.last_tool_code || null,
+    updated_at: callState?.updated_at || null,
+  };
 };
 
 const createLinkDeliveryInteractionLog = async ({
@@ -1211,6 +1323,16 @@ export const createPaymentAgreementFromTool = async ({
       toolOk: false,
       toolCode: 'INVALID_STATE_FOR_TOOL',
     });
+    await createCallToolEvent({
+      debtCaseId: debtCase.id,
+      automationId,
+      eventType: 'agreement_tool_rejected_invalid_state',
+      payload: {
+        interaction_id: interaction.id,
+        current_state: currentState,
+        expected_states: expectedStates,
+      },
+    });
     return {
       ok: false,
       code: 'INVALID_STATE_FOR_TOOL',
@@ -1247,6 +1369,15 @@ export const createPaymentAgreementFromTool = async ({
       toolOk: true,
       toolCode: 'IDEMPOTENT_HIT',
     });
+    await createCallToolEvent({
+      debtCaseId: debtCase.id,
+      automationId,
+      eventType: 'agreement_tool_idempotent',
+      payload: {
+        interaction_id: interaction.id,
+        agreement_id: existingAgreement.id,
+      },
+    });
 
     return {
       ok: true,
@@ -1277,6 +1408,16 @@ export const createPaymentAgreementFromTool = async ({
       tool: 'create-payment-agreement',
       toolOk: false,
       toolCode: validation.code || 'VALIDATION_FAILED',
+    });
+    await createCallToolEvent({
+      debtCaseId: debtCase.id,
+      automationId,
+      eventType: 'agreement_tool_validation_failed',
+      payload: {
+        interaction_id: interaction.id,
+        code: validation.code || 'VALIDATION_FAILED',
+        message: validation.message || null,
+      },
     });
     return {
       ...validation,
@@ -1449,6 +1590,16 @@ export const createPaymentAgreementFromTool = async ({
     toolOk: true,
     toolCode: null,
   });
+  await createCallToolEvent({
+    debtCaseId: debtCase.id,
+    automationId: resolvedAutomationId,
+    eventType: 'agreement_tool_executed',
+    payload: {
+      interaction_id: interaction.id,
+      agreement_id: agreement.id,
+      case_status: caseStatus,
+    },
+  });
 
   return {
     ok: true,
@@ -1517,6 +1668,16 @@ export const createDisputeFromTool = async ({
       tool: 'create-dispute',
       toolOk: false,
       toolCode: 'INVALID_STATE_FOR_TOOL',
+    });
+    await createCallToolEvent({
+      debtCaseId: debtCase.id,
+      automationId,
+      eventType: 'dispute_tool_rejected_invalid_state',
+      payload: {
+        interaction_id: interaction.id,
+        current_state: currentState,
+        expected_states: expectedStates,
+      },
     });
     return {
       ok: false,
@@ -1706,6 +1867,16 @@ export const createDisputeFromTool = async ({
     tool: 'create-dispute',
     toolOk: true,
     toolCode: null,
+  });
+  await createCallToolEvent({
+    debtCaseId: debtCase.id,
+    automationId: resolvedAutomationId,
+    eventType: 'dispute_tool_executed',
+    payload: {
+      interaction_id: interaction.id,
+      dispute_id: dispute.id,
+      dispute_reason: dispute.reason,
+    },
   });
 
   return {

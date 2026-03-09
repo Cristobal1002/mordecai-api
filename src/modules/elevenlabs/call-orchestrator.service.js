@@ -1,4 +1,6 @@
 import {
+  CaseAutomationState,
+  CollectionEvent,
   DebtCase,
   Debtor,
   FlowPolicy,
@@ -149,6 +151,25 @@ const resolveInteraction = async ({ tenantId, caseId, interactionId }) => {
       },
     ],
     order: [['createdAt', 'DESC']],
+  });
+};
+
+const resolveAutomationIdForCase = async ({ debtCaseId }) => {
+  const state = await CaseAutomationState.findOne({
+    where: { debtCaseId, status: 'active' },
+    order: [['updatedAt', 'DESC']],
+  });
+  return state?.automationId || null;
+};
+
+const createCallFsmEvent = async ({ automationId, debtCaseId, payload }) => {
+  if (!automationId) return null;
+  return CollectionEvent.create({
+    automationId,
+    debtCaseId,
+    channel: 'call',
+    eventType: 'call_fsm_transition',
+    payload,
   });
 };
 
@@ -499,6 +520,22 @@ export const orchestrateCallStepFromTool = async ({
           updated_at: new Date().toISOString(),
         },
       },
+    },
+  });
+
+  const resolvedAutomationId = await resolveAutomationIdForCase({
+    debtCaseId: debtCase.id,
+  });
+  await createCallFsmEvent({
+    automationId: resolvedAutomationId,
+    debtCaseId: debtCase.id,
+    payload: {
+      interaction_id: interaction.id,
+      state_before: normalizedState,
+      state_after: nextState,
+      intent,
+      action: transition.action,
+      should_close: shouldClose,
     },
   });
 

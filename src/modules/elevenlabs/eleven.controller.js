@@ -4,6 +4,7 @@ import { normalizeElevenPostCallPayload } from './eleven.mapper.js';
 import {
   createPaymentAgreementFromTool,
   createDisputeFromTool,
+  getCallStateSnapshot,
   syncInteractionFromPostCall,
 } from './eleven.service.js';
 import { orchestrateCallStepFromTool } from './call-orchestrator.service.js';
@@ -315,6 +316,41 @@ export const elevenController = {
       },
       'Completed ElevenLabs orchestrate-call-step tool call'
     );
+    return res.status(200).json(result);
+  },
+
+  getCallStateTool: async (req, res) => {
+    const toolSecretValidation = verifyToolSecret(req);
+    if (!toolSecretValidation.ok) {
+      logger.warn(
+        { hasSecret: toolSecretValidation.hasSecret },
+        'Rejected ElevenLabs get-call-state tool call (invalid secret)'
+      );
+      return res.status(401).json({
+        ok: false,
+        code: 'INVALID_TOOL_SECRET',
+        message: 'Invalid tool secret.',
+      });
+    }
+
+    const tenantId = req.query?.tenant_id || req.query?.tenantId || null;
+    const caseId = req.query?.case_id || req.query?.caseId || null;
+    const interactionId =
+      req.query?.interaction_id || req.query?.interactionId || null;
+
+    if (!tenantId || !caseId) {
+      return res.status(400).json({
+        ok: false,
+        code: 'INVALID_PAYLOAD',
+        message: 'Missing tenant_id or case_id query params.',
+      });
+    }
+
+    const result = await getCallStateSnapshot({
+      tenantId,
+      caseId,
+      interactionId,
+    });
     return res.status(200).json(result);
   },
 };
