@@ -6,6 +6,7 @@ import {
   createDisputeFromTool,
   syncInteractionFromPostCall,
 } from './eleven.service.js';
+import { orchestrateCallStepFromTool } from './call-orchestrator.service.js';
 import { verifyElevenLabsWebhook } from './eleven.webhook.js';
 
 const getWebhookSignatureHeader = (req) =>
@@ -40,6 +41,44 @@ const parseToolPayload = (body) => {
       proposal?.automationId ||
       null,
     proposal,
+  };
+};
+
+const parseOrchestratorPayload = (body) => {
+  const parsed = parseToolPayload(body);
+  const candidate = parsed.proposal || {};
+  const payloadEntities =
+    candidate.entities && typeof candidate.entities === 'object'
+      ? candidate.entities
+      : {};
+
+  return {
+    conversationId: parsed.conversationId,
+    tenantId: parsed.tenantId,
+    caseId: parsed.caseId,
+    interactionId: parsed.interactionId,
+    currentState:
+      candidate.current_state ||
+      candidate.currentState ||
+      body?.current_state ||
+      body?.currentState ||
+      null,
+    userUtterance:
+      candidate.user_utterance ||
+      candidate.userUtterance ||
+      candidate.last_user_message ||
+      candidate.message ||
+      body?.user_utterance ||
+      body?.userUtterance ||
+      body?.message ||
+      '',
+    intentHint:
+      candidate.intent ||
+      candidate.intent_hint ||
+      body?.intent ||
+      body?.intent_hint ||
+      null,
+    entities: payloadEntities,
   };
 };
 
@@ -226,6 +265,55 @@ export const elevenController = {
         disputeId: result?.dispute_id || null,
       },
       'Completed ElevenLabs create-dispute tool call'
+    );
+    return res.status(200).json(result);
+  },
+
+  orchestrateCallStepTool: async (req, res) => {
+    const toolSecretValidation = verifyToolSecret(req);
+    if (!toolSecretValidation.ok) {
+      logger.warn(
+        { hasSecret: toolSecretValidation.hasSecret },
+        'Rejected ElevenLabs orchestrate-call-step tool call (invalid secret)'
+      );
+      return res.status(401).json({
+        ok: false,
+        code: 'INVALID_TOOL_SECRET',
+        message: 'Invalid tool secret.',
+      });
+    }
+
+    const payload = parseOrchestratorPayload(req.body);
+    logger.info(
+      {
+        conversationId: payload.conversationId,
+        tenantId: payload.tenantId,
+        caseId: payload.caseId,
+        interactionId: payload.interactionId,
+        currentState: payload.currentState,
+        hasUtterance: Boolean(String(payload.userUtterance || '').trim()),
+      },
+      'Incoming ElevenLabs orchestrate-call-step tool call'
+    );
+
+    if (!payload.tenantId || !payload.caseId) {
+      return res.status(400).json({
+        ok: false,
+        code: 'INVALID_PAYLOAD',
+        message: 'Missing tenant_id or case_id in tool payload.',
+      });
+    }
+
+    const result = await orchestrateCallStepFromTool(payload);
+    logger.info(
+      {
+        ok: result?.ok === true,
+        code: result?.code || null,
+        currentState: result?.current_state || null,
+        nextState: result?.next_state || null,
+        action: result?.action || null,
+      },
+      'Completed ElevenLabs orchestrate-call-step tool call'
     );
     return res.status(200).json(result);
   },

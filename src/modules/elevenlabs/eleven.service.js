@@ -21,6 +21,7 @@ import { renderElevenLinkEmail } from '../email/ses/ses.email.template.js';
 import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
 import { logger } from '../../utils/logger.js';
 import { registerTwilioCallInElevenLabs } from './eleven.client.js';
+import { CALL_STATES } from './call-state-machine.js';
 
 const SUPPORTED_INTERACTION_OUTCOMES = new Set([
   'CONNECTED',
@@ -958,6 +959,16 @@ export const registerCallForInteraction = async ({
     aiData: {
       ...(interaction.aiData || {}),
       eleven_register_payload: payload,
+      eleven: {
+        ...(interaction.aiData?.eleven || {}),
+        call_state: {
+          state:
+            interaction.aiData?.eleven?.call_state?.state ||
+            CALL_STATES.VERIFY_IDENTITY,
+          previous_state: interaction.aiData?.eleven?.call_state?.state || null,
+          updated_at: new Date().toISOString(),
+        },
+      },
     },
   });
 
@@ -1007,12 +1018,19 @@ export const syncInteractionFromPostCall = async ({ normalizedPayload, s3Key }) 
     aiData: {
       ...(interaction.aiData || {}),
       eleven: {
+        ...(interaction.aiData?.eleven || {}),
         conversation_id: normalizedPayload.conversationId,
         call_sid: normalizedPayload.callSid,
         dynamic_variables: normalizedPayload.dynamicVariables,
         metadata: normalizedPayload.raw?.data?.metadata || null,
         analysis: normalizedPayload.raw?.data?.analysis || null,
         s3_key: s3Key || null,
+        call_state: {
+          ...(interaction.aiData?.eleven?.call_state || {}),
+          state: CALL_STATES.CLOSE,
+          previous_state: interaction.aiData?.eleven?.call_state?.state || null,
+          updated_at: new Date().toISOString(),
+        },
       },
     },
   });

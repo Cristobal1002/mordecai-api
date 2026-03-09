@@ -1,0 +1,88 @@
+export const CALL_STATES = Object.freeze({
+  VERIFY_IDENTITY: 'VERIFY_IDENTITY',
+  DISCLOSE_DEBT: 'DISCLOSE_DEBT',
+  PLAN_SELECTION: 'PLAN_SELECTION',
+  PAYMENT_METHOD: 'PAYMENT_METHOD',
+  CONFIRM_AGREEMENT: 'CONFIRM_AGREEMENT',
+  EXECUTE_AGREEMENT: 'EXECUTE_AGREEMENT',
+  DISPUTE_CAPTURE: 'DISPUTE_CAPTURE',
+  EXECUTE_DISPUTE: 'EXECUTE_DISPUTE',
+  CLOSE: 'CLOSE',
+});
+
+export const CALL_ACTIONS = Object.freeze({
+  NONE: 'NONE',
+  CALL_CREATE_PAYMENT_AGREEMENT: 'CALL_CREATE_PAYMENT_AGREEMENT',
+  CALL_CREATE_DISPUTE: 'CALL_CREATE_DISPUTE',
+  END_CALL: 'END_CALL',
+});
+
+export const VALID_CALL_STATES = new Set(Object.values(CALL_STATES));
+
+const TRANSITIONS = Object.freeze({
+  [CALL_STATES.VERIFY_IDENTITY]: new Set([
+    CALL_STATES.VERIFY_IDENTITY,
+    CALL_STATES.DISCLOSE_DEBT,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.DISCLOSE_DEBT]: new Set([
+    CALL_STATES.DISCLOSE_DEBT,
+    CALL_STATES.PLAN_SELECTION,
+    CALL_STATES.DISPUTE_CAPTURE,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.PLAN_SELECTION]: new Set([
+    CALL_STATES.PLAN_SELECTION,
+    CALL_STATES.PAYMENT_METHOD,
+    CALL_STATES.DISPUTE_CAPTURE,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.PAYMENT_METHOD]: new Set([
+    CALL_STATES.PAYMENT_METHOD,
+    CALL_STATES.CONFIRM_AGREEMENT,
+    CALL_STATES.DISPUTE_CAPTURE,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.CONFIRM_AGREEMENT]: new Set([
+    CALL_STATES.CONFIRM_AGREEMENT,
+    CALL_STATES.EXECUTE_AGREEMENT,
+    CALL_STATES.PLAN_SELECTION,
+    CALL_STATES.DISPUTE_CAPTURE,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.EXECUTE_AGREEMENT]: new Set([
+    CALL_STATES.EXECUTE_AGREEMENT,
+    CALL_STATES.CONFIRM_AGREEMENT,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.DISPUTE_CAPTURE]: new Set([
+    CALL_STATES.DISPUTE_CAPTURE,
+    CALL_STATES.EXECUTE_DISPUTE,
+    CALL_STATES.PLAN_SELECTION,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.EXECUTE_DISPUTE]: new Set([
+    CALL_STATES.EXECUTE_DISPUTE,
+    CALL_STATES.DISPUTE_CAPTURE,
+    CALL_STATES.CLOSE,
+  ]),
+  [CALL_STATES.CLOSE]: new Set([CALL_STATES.CLOSE]),
+});
+
+export const normalizeCallState = (value) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) return null;
+  return VALID_CALL_STATES.has(normalized) ? normalized : null;
+};
+
+export const getAllowedTransitions = (state) => {
+  const normalized = normalizeCallState(state) || CALL_STATES.VERIFY_IDENTITY;
+  return Array.from(TRANSITIONS[normalized] || []);
+};
+
+export const isAllowedTransition = (fromState, toState) => {
+  const from = normalizeCallState(fromState);
+  const to = normalizeCallState(toState);
+  if (!from || !to) return false;
+  return Boolean(TRANSITIONS[from]?.has(to));
+};
