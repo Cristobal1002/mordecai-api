@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Op } from 'sequelize';
 import {
   DebtCase,
   Debtor,
@@ -21,7 +22,7 @@ import { renderElevenLinkEmail } from '../email/ses/ses.email.template.js';
 import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
 import { logger } from '../../utils/logger.js';
 import { registerTwilioCallInElevenLabs } from './eleven.client.js';
-import { CALL_STATES } from './call-state-machine.js';
+import { CALL_ACTIONS, CALL_STATES, normalizeCallState } from './call-state-machine.js';
 
 const SUPPORTED_INTERACTION_OUTCOMES = new Set([
   'CONNECTED',
@@ -455,6 +456,112 @@ const createCollectionEvent = async ({
     channel,
     eventType,
     payload,
+  });
+};
+
+const AGREEMENT_ALLOWED_FSM_STATES = new Set([
+  CALL_STATES.CONFIRM_AGREEMENT,
+  CALL_STATES.EXECUTE_AGREEMENT,
+]);
+
+const DISPUTE_ALLOWED_FSM_STATES = new Set([
+  CALL_STATES.DISPUTE_CAPTURE,
+  CALL_STATES.EXECUTE_DISPUTE,
+]);
+
+const resolveToolInteractionContext = async ({ tenantId, caseId, interactionId }) => {
+  const byId = normalizeUuid(interactionId);
+  if (byId) {
+    return InteractionLog.findOne({
+      where: {
+        id: byId,
+        tenantId,
+        debtCaseId: caseId,
+        type: 'CALL',
+      },
+      include: [{ model: DebtCase, as: 'debtCase' }],
+    });
+  }
+
+  return InteractionLog.findOne({
+    where: {
+      tenantId,
+      debtCaseId: caseId,
+      type: 'CALL',
+      status: { [Op.in]: ['queued', 'in_progress', 'completed'] },
+    },
+    include: [{ model: DebtCase, as: 'debtCase' }],
+    order: [['updatedAt', 'DESC']],
+  });
+};
+
+const resolveCallStateFromInteraction = (interaction) =>
+  normalizeCallState(interaction?.aiData?.eleven?.call_state?.state) || CALL_STATES.VERIFY_IDENTITY;
+
+const updateInteractionCallStateFromTool = async ({
+  interaction,
+  nextState,
+  action,
+  tool,
+  toolOk,
+  toolCode,
+}) => {
+  if (!interaction) return;
+
+  const previousStateSnapshot = interaction.aiData?.eleven?.call_state || {};
+  const previousState = normalizeCallState(previousStateSnapshot.state) || CALL_STATES.VERIFY_IDENTITY;
+  const targetState = normalizeCallState(nextState) || previousState;
+  const safeAction = String(action || '').trim() || previousStateSnapshot.last_action || null;
+  const safeTool = String(tool || '').trim() || previousStateSnapshot.last_tool || null;
+  const hasToolOk = typeof toolOk === 'boolean';
+  const hasToolCode = toolCode !== undefined && toolCode !== null && String(toolCode).trim() !== '';
+
+  await interaction.update({
+    aiData: {
+      ...(interaction.aiData || {}),
+      eleven: {
+        ...(interaction.aiData?.eleven || {}),
+        call_state: {
+          ...previousStateSnapshot,
+          previous_state: previousState,
+          state: targetState,
+          last_action: safeAction,
+          last_tool: safeTool,
+          last_tool_ok: hasToolOk ? toolOk : previousStateSnapshot.last_tool_ok ?? null,
+          last_tool_code: hasToolCode
+            ? String(toolCode)
+            : previousStateSnapshot.last_tool_code || null,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    },
+  });
+};
+
+const resolveCaseStatusFromAgreementType = (agreementType) =>
+  agreementType === 'INSTALLMENTS' ? 'PAYMENT_PLAN' : 'PROMISE_TO_PAY';
+
+const findExistingAgreementByInteraction = async ({
+  tenantId,
+  debtCaseId,
+  interactionId,
+}) => {
+  const safeInteractionId = normalizeUuid(interactionId);
+  if (!safeInteractionId) return null;
+
+  return PaymentAgreement.findOne({
+    where: {
+      tenantId,
+      debtCaseId,
+      createdBy: 'AI',
+      status: 'ACCEPTED',
+      terms: {
+        [Op.contains]: {
+          interaction_id: safeInteractionId,
+        },
+      },
+    },
+    order: [['createdAt', 'DESC']],
   });
 };
 
@@ -1080,6 +1187,80 @@ export const createPaymentAgreementFromTool = async ({
     };
   }
 
+  const interaction = await resolveToolInteractionContext({
+    tenantId,
+    caseId: debtCase.id,
+    interactionId,
+  });
+  if (!interaction) {
+    return {
+      ok: false,
+      code: 'INTERACTION_NOT_FOUND',
+      message: 'Call interaction was not found for the provided context.',
+    };
+  }
+
+  const currentState = resolveCallStateFromInteraction(interaction);
+  if (!AGREEMENT_ALLOWED_FSM_STATES.has(currentState)) {
+    const expectedStates = Array.from(AGREEMENT_ALLOWED_FSM_STATES);
+    await updateInteractionCallStateFromTool({
+      interaction,
+      nextState: currentState,
+      action: CALL_ACTIONS.NONE,
+      tool: 'create-payment-agreement',
+      toolOk: false,
+      toolCode: 'INVALID_STATE_FOR_TOOL',
+    });
+    return {
+      ok: false,
+      code: 'INVALID_STATE_FOR_TOOL',
+      message: `create-payment-agreement is only allowed in states: ${expectedStates.join(', ')}`,
+      current_state: currentState,
+      expected_states: expectedStates,
+    };
+  }
+
+  const existingAgreement = await findExistingAgreementByInteraction({
+    tenantId,
+    debtCaseId: debtCase.id,
+    interactionId,
+  });
+  if (existingAgreement) {
+    const paymentLinkUrl =
+      existingAgreement.paymentLinkUrl ||
+      (await createPaymentLinkAndGetUrl({
+        tenantId,
+        debtCaseId: debtCase.id,
+        paymentAgreementId: existingAgreement.id,
+      }));
+
+    if (!existingAgreement.paymentLinkUrl) {
+      await existingAgreement.update({ paymentLinkUrl });
+    }
+
+    const caseStatus = resolveCaseStatusFromAgreementType(existingAgreement.type);
+    await updateInteractionCallStateFromTool({
+      interaction,
+      nextState: CALL_STATES.CLOSE,
+      action: CALL_ACTIONS.CALL_CREATE_PAYMENT_AGREEMENT,
+      tool: 'create-payment-agreement',
+      toolOk: true,
+      toolCode: 'IDEMPOTENT_HIT',
+    });
+
+    return {
+      ok: true,
+      idempotent: true,
+      agreement_id: existingAgreement.id,
+      payment_link_url: paymentLinkUrl,
+      case_status: caseStatus,
+      current_state: currentState,
+      next_state: CALL_STATES.CLOSE,
+      speak_back:
+        'Your payment agreement was already registered. Please use the secure link already sent.',
+    };
+  }
+
   const resolvedPolicy = await resolvePolicyForCase(tenantId, debtCase);
   const rules = getRulesFromResolvedPolicy(resolvedPolicy);
   const validation = validateProposalAgainstRules({
@@ -1088,7 +1269,21 @@ export const createPaymentAgreementFromTool = async ({
     rules,
   });
 
-  if (!validation.ok) return validation;
+  if (!validation.ok) {
+    await updateInteractionCallStateFromTool({
+      interaction,
+      nextState: CALL_STATES.CONFIRM_AGREEMENT,
+      action: CALL_ACTIONS.CALL_CREATE_PAYMENT_AGREEMENT,
+      tool: 'create-payment-agreement',
+      toolOk: false,
+      toolCode: validation.code || 'VALIDATION_FAILED',
+    });
+    return {
+      ...validation,
+      current_state: currentState,
+      next_state: CALL_STATES.CONFIRM_AGREEMENT,
+    };
+  }
 
   const agreementType = validation.planType === 'INSTALLMENTS_4' ? 'INSTALLMENTS' : 'PROMISE_TO_PAY';
   const firstDueDate = toDateOnly(proposal?.first_due_date);
@@ -1246,6 +1441,15 @@ export const createPaymentAgreementFromTool = async ({
       'Perfect. I sent your secure link by SMS. Please confirm you received it.';
   }
 
+  await updateInteractionCallStateFromTool({
+    interaction,
+    nextState: CALL_STATES.CLOSE,
+    action: CALL_ACTIONS.CALL_CREATE_PAYMENT_AGREEMENT,
+    tool: 'create-payment-agreement',
+    toolOk: true,
+    toolCode: null,
+  });
+
   return {
     ok: true,
     agreement_id: agreement.id,
@@ -1263,6 +1467,8 @@ export const createPaymentAgreementFromTool = async ({
       })),
     },
     case_status: caseStatus,
+    current_state: currentState,
+    next_state: CALL_STATES.CLOSE,
     speak_back: speakBack,
   };
 };
@@ -1285,6 +1491,39 @@ export const createDisputeFromTool = async ({
       ok: false,
       code: 'CASE_NOT_FOUND',
       message: 'Debt case not found for the provided tenant_id and case_id.',
+    };
+  }
+
+  const interaction = await resolveToolInteractionContext({
+    tenantId,
+    caseId: debtCase.id,
+    interactionId,
+  });
+  if (!interaction) {
+    return {
+      ok: false,
+      code: 'INTERACTION_NOT_FOUND',
+      message: 'Call interaction was not found for the provided context.',
+    };
+  }
+
+  const currentState = resolveCallStateFromInteraction(interaction);
+  if (!DISPUTE_ALLOWED_FSM_STATES.has(currentState)) {
+    const expectedStates = Array.from(DISPUTE_ALLOWED_FSM_STATES);
+    await updateInteractionCallStateFromTool({
+      interaction,
+      nextState: currentState,
+      action: CALL_ACTIONS.NONE,
+      tool: 'create-dispute',
+      toolOk: false,
+      toolCode: 'INVALID_STATE_FOR_TOOL',
+    });
+    return {
+      ok: false,
+      code: 'INVALID_STATE_FOR_TOOL',
+      message: `create-dispute is only allowed in states: ${expectedStates.join(', ')}`,
+      current_state: currentState,
+      expected_states: expectedStates,
     };
   }
 
@@ -1460,6 +1699,15 @@ export const createDisputeFromTool = async ({
       'Understood. I registered your dispute, but I could not send a link because contact details are missing.';
   }
 
+  await updateInteractionCallStateFromTool({
+    interaction,
+    nextState: CALL_STATES.CLOSE,
+    action: CALL_ACTIONS.CALL_CREATE_DISPUTE,
+    tool: 'create-dispute',
+    toolOk: true,
+    toolCode: null,
+  });
+
   return {
     ok: true,
     dispute_id: dispute.id,
@@ -1478,6 +1726,8 @@ export const createDisputeFromTool = async ({
         reason: d.reason || null,
       })),
     },
+    current_state: currentState,
+    next_state: CALL_STATES.CLOSE,
     speak_back: speakBack,
   };
 };
