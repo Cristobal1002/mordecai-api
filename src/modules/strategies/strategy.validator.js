@@ -39,13 +39,13 @@ export const createStageValidator = [
   tenantIdParam,
   strategyIdParam,
   body('name').trim().notEmpty().withMessage('Name is required').isLength({ max: 120 }).withMessage('Name must be at most 120 characters'),
-  body('minDaysPastDue').isInt({ min: 0 }).withMessage('minDaysPastDue must be a non-negative integer'),
+  body('minDaysPastDue').isInt({ min: -365 }).withMessage('minDaysPastDue must be an integer >= -365 (negative = days before due)'),
   body('maxDaysPastDue')
     .optional({ nullable: true })
     .custom((value, { req }) => {
       if (value === null || value === undefined) return true;
       const maxVal = Number(value);
-      if (!Number.isInteger(maxVal) || maxVal < 0) throw new Error('maxDaysPastDue must be a non-negative integer or null');
+      if (!Number.isInteger(maxVal) || maxVal < -365) throw new Error('maxDaysPastDue must be an integer >= -365 or null');
       const minVal = Number(req.body.minDaysPastDue);
       if (minVal != null && maxVal < minVal) throw new Error('maxDaysPastDue must be >= minDaysPastDue');
       return true;
@@ -61,13 +61,13 @@ export const updateStageValidator = [
   strategyIdParam,
   stageIdParam,
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty').isLength({ max: 120 }).withMessage('Name must be at most 120 characters'),
-  body('minDaysPastDue').optional().isInt({ min: 0 }).withMessage('minDaysPastDue must be a non-negative integer'),
+  body('minDaysPastDue').optional().isInt({ min: -365 }).withMessage('minDaysPastDue must be an integer >= -365'),
   body('maxDaysPastDue')
     .optional({ nullable: true })
     .custom((value, { req }) => {
       if (value === null || value === undefined) return true;
       const maxVal = Number(value);
-      if (!Number.isInteger(maxVal) || maxVal < 0) throw new Error('maxDaysPastDue must be a non-negative integer or null');
+      if (!Number.isInteger(maxVal) || maxVal < -365) throw new Error('maxDaysPastDue must be an integer >= -365 or null');
       const minVal = req.body.minDaysPastDue != null ? Number(req.body.minDaysPastDue) : null;
       if (minVal != null && maxVal < minVal) throw new Error('maxDaysPastDue must be >= minDaysPastDue');
       return true;
@@ -80,3 +80,7 @@ export const updateStageValidator = [
 ];
 
 export const deleteStageValidator = [tenantIdParam, strategyIdParam, stageIdParam];
+
+export const deleteStrategyValidator = [tenantIdParam, param('id').isUUID().withMessage('Invalid strategy ID')];
+
+export const getDeletabilityValidator = [tenantIdParam, param('id').isUUID().withMessage('Invalid strategy ID')];

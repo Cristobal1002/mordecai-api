@@ -126,7 +126,8 @@ export const automationController = {
         ? req.query.sortBy
         : null;
       const sortOrder = req.query.sortOrder === 'desc' ? 'DESC' : 'ASC';
-      const result = await automationService.getCases(tenantId, automationId, limit, offset, tab, filters, sortBy, sortOrder);
+      const search = req.query.search && String(req.query.search).trim() ? String(req.query.search).trim() : null;
+      const result = await automationService.getCases(tenantId, automationId, limit, offset, tab, filters, sortBy, sortOrder, search);
       res.ok(result, 'Automation cases retrieved successfully');
     } catch (error) {
       next(error);

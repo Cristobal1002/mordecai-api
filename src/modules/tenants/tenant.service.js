@@ -33,6 +33,32 @@ const requireTenantAdmin = async (tenantId, req) => {
   return { user, membership };
 };
 
+const requireTenantOwner = async (tenantId, req) => {
+  const identity = getAuthIdentity(req);
+  if (!identity.sub) {
+    throw new ForbiddenError('Unauthorized');
+  }
+
+  const user = await userService.ensureUserFromAuth(identity);
+  const membership = await TenantUser.findOne({
+    where: {
+      tenantId,
+      userId: user.id,
+      status: 'active',
+    },
+  });
+
+  if (!membership) {
+    throw new ForbiddenError('You are not a member of this tenant.');
+  }
+
+  if (membership.role !== 'owner') {
+    throw new ForbiddenError('Owner privileges required.');
+  }
+
+  return { user, membership };
+};
+
 export const tenantService = {
   create: async (data, req) => {
     const identity = getAuthIdentity(req);
@@ -84,6 +110,7 @@ export const tenantService = {
   },
 
   requireTenantAdmin: (tenantId, req) => requireTenantAdmin(tenantId, req),
+  requireTenantOwner: (tenantId, req) => requireTenantOwner(tenantId, req),
 
   getAdminSnapshot: async (tenantId, req) => {
     await requireTenantAdmin(tenantId, req);

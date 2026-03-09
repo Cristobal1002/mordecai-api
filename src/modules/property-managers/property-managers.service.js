@@ -11,6 +11,7 @@ import {
   PmsLease,
   PmsProperty,
   PmsUnit,
+  PmsPortfolio,
   Software,
   ArCharge,
   ArPayment,
@@ -733,9 +734,11 @@ export const propertyManagersService = {
    */
   getPmsStats: async (tenantId) => {
     await ensureTenant(tenantId);
-    const [totalDebtors, totalLeases, totalCharges, totalPayments, balancesCount, latestSnapshot] = await Promise.all([
+    const [totalDebtors, totalLeases, totalUnits, totalPortfolios, totalCharges, totalPayments, balancesCount, latestSnapshot] = await Promise.all([
       PmsDebtor.count({ where: { tenantId } }),
       PmsLease.count({ where: { tenantId } }),
+      PmsUnit.count({ where: { tenantId } }),
+      PmsPortfolio.count({ where: { tenantId } }),
       ArCharge.count({ where: { tenantId } }),
       ArPayment.count({ where: { tenantId } }),
       ArBalance.count({ where: { tenantId } }),
@@ -758,12 +761,94 @@ export const propertyManagersService = {
     return {
       totalDebtors,
       totalLeases,
+      totalUnits,
+      totalPortfolios,
       totalCharges,
       totalPayments,
       totalBalanceCents: aging?.totalCents ?? 0,
       balancesCount,
       aging,
     };
+  },
+
+  /**
+   * List pms_units for the tenant (synced from PMS). Optional filter by connectionId, propertyId, search (unitNumber).
+   */
+  listPmsUnits: async (tenantId, opts = {}) => {
+    await ensureTenant(tenantId);
+    const limit = Math.min(Number(opts.limit) || 500, 1000);
+    const offset = Number(opts.offset) || 0;
+    const connectionId = opts.connectionId || null;
+    const propertyId = opts.propertyId || null;
+    const search = typeof opts.search === 'string' ? opts.search.trim() : null;
+    const sortBy = opts.sortBy && ['unitNumber', 'createdAt'].includes(opts.sortBy) ? opts.sortBy : 'unitNumber';
+    const sortOrder = opts.sortOrder === 'desc' ? 'DESC' : 'ASC';
+
+    const where = { tenantId };
+    if (connectionId) where.pmsConnectionId = connectionId;
+    if (propertyId) where.pmsPropertyId = propertyId;
+    if (search && search.length > 0) {
+      where.unitNumber = { [Op.iLike]: `%${search}%` };
+    }
+
+    const { rows, count } = await PmsUnit.findAndCountAll({
+      where,
+      limit,
+      offset,
+      order: [[sortBy, sortOrder]],
+      include: [
+        {
+          association: 'pmsConnection',
+          attributes: ['id', 'status', 'lastSyncedAt'],
+          include: [{ association: 'software', attributes: ['key', 'name'] }],
+        },
+        {
+          association: 'pmsProperty',
+          attributes: ['id', 'name', 'externalId'],
+          required: false,
+          include: [
+            { association: 'pmsPortfolio', attributes: ['id', 'name'], required: false },
+          ],
+        },
+      ],
+    });
+
+    return { data: rows, total: count, limit, offset };
+  },
+
+  /**
+   * List pms_portfolios for the tenant (synced from PMS). Optional filter by connectionId, search (name).
+   */
+  listPmsPortfolios: async (tenantId, opts = {}) => {
+    await ensureTenant(tenantId);
+    const limit = Math.min(Number(opts.limit) || 500, 1000);
+    const offset = Number(opts.offset) || 0;
+    const connectionId = opts.connectionId || null;
+    const search = typeof opts.search === 'string' ? opts.search.trim() : null;
+    const sortBy = opts.sortBy && ['name', 'createdAt'].includes(opts.sortBy) ? opts.sortBy : 'name';
+    const sortOrder = opts.sortOrder === 'desc' ? 'DESC' : 'ASC';
+
+    const where = { tenantId };
+    if (connectionId) where.pmsConnectionId = connectionId;
+    if (search && search.length > 0) {
+      where.name = { [Op.iLike]: `%${search}%` };
+    }
+
+    const { rows, count } = await PmsPortfolio.findAndCountAll({
+      where,
+      limit,
+      offset,
+      order: [[sortBy, sortOrder]],
+      include: [
+        {
+          association: 'pmsConnection',
+          attributes: ['id', 'status', 'lastSyncedAt'],
+          include: [{ association: 'software', attributes: ['key', 'name'] }],
+        },
+      ],
+    });
+
+    return { data: rows, total: count, limit, offset };
   },
 
   /**

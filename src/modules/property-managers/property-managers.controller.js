@@ -198,6 +198,43 @@ export const propertyManagersController = {
     }
   },
 
+  listPmsUnits: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const { connectionId, propertyId, limit, offset, search, sortBy, sortOrder } = req.query;
+      const result = await propertyManagersService.listPmsUnits(tenantId, {
+        connectionId: connectionId || undefined,
+        propertyId: propertyId || undefined,
+        limit,
+        offset,
+        search: search || undefined,
+        sortBy: sortBy || undefined,
+        sortOrder: sortOrder || undefined,
+      });
+      res.ok(result, 'PMS units retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  listPmsPortfolios: async (req, res, next) => {
+    try {
+      const { tenantId } = req.params;
+      const { connectionId, limit, offset, search, sortBy, sortOrder } = req.query;
+      const result = await propertyManagersService.listPmsPortfolios(tenantId, {
+        connectionId: connectionId || undefined,
+        limit,
+        offset,
+        search: search || undefined,
+        sortBy: sortBy || undefined,
+        sortOrder: sortOrder || undefined,
+      });
+      res.ok(result, 'PMS portfolios retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
+
   getPmsStats: async (req, res, next) => {
     try {
       const { tenantId } = req.params;

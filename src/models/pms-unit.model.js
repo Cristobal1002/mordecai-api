@@ -13,6 +13,7 @@ export class PmsUnit extends Model {
         pmsPropertyId: { type: DataTypes.UUID, allowNull: true, field: 'pms_property_id', references: { model: 'pms_properties', key: 'id' } },
         externalId: { type: DataTypes.STRING(256), allowNull: false, field: 'external_id' },
         unitNumber: { type: DataTypes.STRING(64), field: 'unit_number' },
+        rentCents: { type: DataTypes.BIGINT, allowNull: true, field: 'rent_cents' },
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
       },

@@ -9,12 +9,15 @@ import {
   PmsDebtor,
   PmsDebtorContact,
   PmsLease,
+  PmsPortfolio,
   PmsProperty,
   PmsUnit,
   ArCharge,
   ArPayment,
   ArBalance,
   ArAgingSnapshot,
+  ArPortfolioAgingSnapshot,
+  ArLeaseAgingSnapshot,
   SyncRun,
   ExternalMapping,
 } from '../../../models/index.js';
@@ -76,6 +79,14 @@ async function resolveInternalId(connectionId, entityType, externalId, transacti
     });
     return debtor?.id ?? null;
   }
+  if (entityType === 'portfolio') {
+    const port = await PmsPortfolio.findOne({
+      where: { pmsConnectionId: connectionId, externalId: String(externalId) },
+      attributes: ['id'],
+      transaction,
+    });
+    return port?.id ?? null;
+  }
   if (entityType === 'property') {
     const prop = await PmsProperty.findOne({
       where: { pmsConnectionId: connectionId, externalId: String(externalId) },
@@ -112,6 +123,8 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
   const stats = {
     debtorsCreated: 0,
     debtorsUpdated: 0,
+    portfoliosCreated: 0,
+    portfoliosUpdated: 0,
     propertiesCreated: 0,
     propertiesUpdated: 0,
     unitsCreated: 0,
@@ -121,9 +134,50 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
     leasesSkipped: 0,
   };
   const debtors = data.debtors || [];
+  const portfolios = data.portfolios || [];
   const properties = data.properties || [];
   const units = data.units || [];
   const leases = data.leases || [];
+
+  // 1. Portfolios (before properties - properties reference portfolio)
+  const existingPortfolios = await PmsPortfolio.findAll({
+    where: { pmsConnectionId: connectionId },
+    attributes: ['id', 'externalId'],
+    transaction,
+  });
+  const existingPortsByExternal = new Map(existingPortfolios.map((r) => [r.externalId, r]));
+  const portToCreate = [];
+  const portToUpdate = [];
+  for (const p of portfolios) {
+    const payload = {
+      tenantId,
+      pmsConnectionId: connectionId,
+      externalId: p.externalId,
+      name: p.name ?? null,
+      meta: p.meta ?? {},
+    };
+    const existing = existingPortsByExternal.get(p.externalId);
+    if (existing) {
+      portToUpdate.push({ id: existing.id, payload: { name: payload.name, meta: payload.meta } });
+    } else {
+      portToCreate.push(payload);
+    }
+  }
+  const BULK_CHUNK = 100;
+  for (let i = 0; i < portToCreate.length; i += BULK_CHUNK) {
+    const chunk = portToCreate.slice(i, i + BULK_CHUNK);
+    const created = await PmsPortfolio.bulkCreate(chunk, { transaction });
+    stats.portfoliosCreated += created.length;
+    for (const row of created) {
+      await upsertExternalMapping(connectionId, 'portfolio', row.externalId, 'pms_portfolio', row.id, transaction);
+    }
+  }
+  const UPDATE_BATCH = 50;
+  for (let i = 0; i < portToUpdate.length; i += UPDATE_BATCH) {
+    const batch = portToUpdate.slice(i, i + UPDATE_BATCH);
+    await Promise.all(batch.map(({ id, payload }) => PmsPortfolio.update(payload, { where: { id }, transaction })));
+    stats.portfoliosUpdated += batch.length;
+  }
 
   for (const d of debtors) {
     const [instance, created] = await PmsDebtor.upsert(
@@ -153,6 +207,7 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
     }
   }
 
+  // 2. Properties (with pms_portfolio_id from portfolioExternalId)
   const existingProperties = await PmsProperty.findAll({
     where: { pmsConnectionId: connectionId },
     attributes: ['id', 'externalId'],
@@ -161,22 +216,40 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
   const existingPropsByExternal = new Map(existingProperties.map((r) => [r.externalId, r]));
   const propToCreate = [];
   const propToUpdate = [];
+  const portfolioIdCache = new Map();
   for (const p of properties) {
+    let pmsPortfolioId = null;
+    if (p.portfolioExternalId) {
+      if (!portfolioIdCache.has(p.portfolioExternalId)) {
+        portfolioIdCache.set(
+          p.portfolioExternalId,
+          await resolveInternalId(connectionId, 'portfolio', p.portfolioExternalId, transaction)
+        );
+      }
+      pmsPortfolioId = portfolioIdCache.get(p.portfolioExternalId);
+    }
     const payload = {
       tenantId,
       pmsConnectionId: connectionId,
+      pmsPortfolioId: pmsPortfolioId ?? null,
       externalId: p.externalId,
       name: p.name ?? null,
       address: p.address ?? {},
     };
     const existing = existingPropsByExternal.get(p.externalId);
     if (existing) {
-      propToUpdate.push({ id: existing.id, payload: { name: payload.name, address: payload.address } });
+      propToUpdate.push({
+        id: existing.id,
+        payload: {
+          name: payload.name,
+          address: payload.address,
+          pmsPortfolioId: payload.pmsPortfolioId,
+        },
+      });
     } else {
       propToCreate.push(payload);
     }
   }
-  const BULK_CHUNK = 100;
   for (let i = 0; i < propToCreate.length; i += BULK_CHUNK) {
     const chunk = propToCreate.slice(i, i + BULK_CHUNK);
     const created = await PmsProperty.bulkCreate(chunk, { transaction });
@@ -185,7 +258,6 @@ async function syncDebtorsAndLeases(connectionId, tenantId, data, syncRunId, tra
       await upsertExternalMapping(connectionId, 'property', row.externalId, 'pms_property', row.id, transaction);
     }
   }
-  const UPDATE_BATCH = 50;
   for (let i = 0; i < propToUpdate.length; i += UPDATE_BATCH) {
     const batch = propToUpdate.slice(i, i + UPDATE_BATCH);
     await Promise.all(batch.map(({ id, payload }) => PmsProperty.update(payload, { where: { id }, transaction })));
@@ -447,12 +519,15 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, 
   const leaseBalancesFromConnector = data?.leaseBalances ?? [];
   /** @type {Map<string, number>} lease id -> balanceCents from connector */
   const connectorBalanceByLeaseId = new Map();
+  /** @type {Map<string, number>} lease id -> pastDueTotalCents from connector (Rentvine) */
+  const connectorPastDueByLeaseId = new Map();
 
   if (leaseBalancesFromConnector.length > 0) {
     for (const lb of leaseBalancesFromConnector) {
       const pmsLeaseId = await resolveInternalId(connectionId, 'lease', lb.leaseExternalId, transaction);
       if (!pmsLeaseId) continue;
       const balanceCents = Number(lb.balanceCents) || 0;
+      const pastDueCents = lb.pastDueTotalCents != null ? Number(lb.pastDueTotalCents) : null;
       const lbDate = lb.asOfDate || asOfDate;
       await ArBalance.upsert(
         {
@@ -460,18 +535,31 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, 
           pmsConnectionId: connectionId,
           pmsLeaseId,
           balanceCents,
+          pastDueTotalCents: lb.pastDueTotalCents ?? null,
+          pastDueRentCents: lb.pastDueRentCents ?? null,
+          unpaidRentCents: lb.unpaidRentCents ?? null,
           currency: 'USD',
           asOfDate: lbDate,
         },
         { transaction, conflictFields: ['pms_lease_id', 'as_of_date'] }
       );
       connectorBalanceByLeaseId.set(pmsLeaseId, balanceCents);
+      if (pastDueCents != null && pastDueCents >= 0) {
+        connectorPastDueByLeaseId.set(pmsLeaseId, pastDueCents);
+      }
     }
   }
 
-  const leases = await PmsLease.findAll({ where: { pmsConnectionId: connectionId }, attributes: ['id'], transaction });
+  const leases = await PmsLease.findAll({
+    where: { pmsConnectionId: connectionId },
+    attributes: ['id', 'pmsPropertyId'],
+    include: [{ model: PmsProperty, as: 'pmsProperty', attributes: ['id', 'pmsPortfolioId'], required: false }],
+    transaction,
+  });
   let totalCents = 0;
   const buckets = { '0_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0 };
+  /** @type {Map<string, { buckets: Record<string, number>, total: number, pastDueTotal: number }>} portfolioId -> aggregates */
+  const portfolioAggregates = new Map();
 
   for (const lease of leases) {
     const charges = await ArCharge.findAll({
@@ -509,6 +597,8 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, 
     if (leaseBalanceCents > 0) totalCents += leaseBalanceCents;
 
     const today = new Date(asOfDate);
+    let leaseMaxDpd = 0;
+    const leaseBuckets = { '0_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0 };
     for (const c of charges) {
       const dueDateOrPost = c.dueDate || c.postDate;
       if (!dueDateOrPost) continue;
@@ -517,11 +607,90 @@ async function computeBalancesAndAging(connectionId, tenantId, syncRunId, data, 
       if (daysPastDue < 0) continue;
       const amt = Number(c.openAmountCents ?? c.amountCents);
       if (amt <= 0) continue;
-      if (daysPastDue <= 30) buckets['0_30'] += amt;
-      else if (daysPastDue <= 60) buckets['31_60'] += amt;
-      else if (daysPastDue <= 90) buckets['61_90'] += amt;
-      else buckets['90_plus'] += amt;
+      if (daysPastDue > leaseMaxDpd) leaseMaxDpd = daysPastDue;
+      if (daysPastDue <= 30) {
+        buckets['0_30'] += amt;
+        leaseBuckets['0_30'] += amt;
+      } else if (daysPastDue <= 60) {
+        buckets['31_60'] += amt;
+        leaseBuckets['31_60'] += amt;
+      } else if (daysPastDue <= 90) {
+        buckets['61_90'] += amt;
+        leaseBuckets['61_90'] += amt;
+      } else {
+        buckets['90_plus'] += amt;
+        leaseBuckets['90_plus'] += amt;
+      }
     }
+
+    const leaseBalance = hasConnectorBalance
+      ? connectorBalanceByLeaseId.get(lease.id)
+      : computedBalanceCents;
+    const chargeBasedPastDue = leaseBuckets['0_30'] + leaseBuckets['31_60'] + leaseBuckets['61_90'] + leaseBuckets['90_plus'];
+    const leasePastDueCents = leaseBalance > 0
+      ? (hasConnectorBalance && connectorPastDueByLeaseId.has(lease.id)
+        ? Math.min(connectorPastDueByLeaseId.get(lease.id), leaseBalance)
+        : chargeBasedPastDue)
+      : 0;
+    const leaseBucketLabel =
+      leaseMaxDpd <= 0 ? 'current' : leaseMaxDpd <= 30 ? '1_30' : leaseMaxDpd <= 60 ? '31_60' : leaseMaxDpd <= 90 ? '61_90' : '91_plus';
+    const riskTier =
+      leaseMaxDpd <= 0 ? 'al_dia' : leaseMaxDpd <= 30 ? 'bajo' : leaseMaxDpd <= 60 ? 'medio' : leaseMaxDpd <= 90 ? 'alto' : 'critico';
+    await PmsLease.update(
+      { riskTier },
+      { where: { id: lease.id }, transaction }
+    );
+    await ArLeaseAgingSnapshot.upsert(
+      {
+        tenantId,
+        pmsConnectionId: connectionId,
+        pmsLeaseId: lease.id,
+        asOfDate,
+        balanceCents: Math.max(0, leaseBalance),
+        pastDueCents: leasePastDueCents,
+        bucketLabel: leaseBucketLabel,
+        daysPastDue: leaseMaxDpd,
+      },
+      { transaction, conflictFields: ['pms_lease_id', 'as_of_date'] }
+    );
+
+    const portfolioId = lease.pmsProperty?.pmsPortfolioId ?? lease.pmsProperty?.pms_portfolio_id;
+    if (portfolioId && leaseBalance > 0) {
+      const key = String(portfolioId);
+      if (!portfolioAggregates.has(key)) {
+        portfolioAggregates.set(key, {
+          buckets: { '0_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0 },
+          total: 0,
+          pastDueTotal: 0,
+        });
+      }
+      const agg = portfolioAggregates.get(key);
+      agg.total += leaseBalance;
+      agg.pastDueTotal += leasePastDueCents;
+      agg.buckets['0_30'] += leaseBuckets['0_30'];
+      agg.buckets['31_60'] += leaseBuckets['31_60'];
+      agg.buckets['61_90'] += leaseBuckets['61_90'];
+      agg.buckets['90_plus'] += leaseBuckets['90_plus'];
+    }
+  }
+
+  for (const [portfolioIdStr, agg] of portfolioAggregates) {
+    await ArPortfolioAgingSnapshot.upsert(
+      {
+        tenantId,
+        pmsConnectionId: connectionId,
+        pmsPortfolioId: portfolioIdStr,
+        asOfDate,
+        totalCents: agg.total,
+        bucket030Cents: agg.buckets['0_30'],
+        bucket3160Cents: agg.buckets['31_60'],
+        bucket6190Cents: agg.buckets['61_90'],
+        bucket90PlusCents: agg.buckets['90_plus'],
+        pastDueTotalCents: agg.pastDueTotal,
+        currency: 'USD',
+      },
+      { transaction, conflictFields: ['pms_portfolio_id', 'as_of_date'] }
+    );
   }
 
   await ArAgingSnapshot.upsert(
@@ -614,6 +783,7 @@ export async function runSync(connectionId, options = {}) {
     const data = await connector.syncFull();
     const dataNorm = {
       debtors: data?.debtors ?? [],
+      portfolios: data?.portfolios ?? [],
       properties: data?.properties ?? [],
       units: data?.units ?? [],
       leases: data?.leases ?? [],
@@ -628,6 +798,7 @@ export async function runSync(connectionId, options = {}) {
         connectionId,
         syncRunId: syncRun.id,
         debtorsCount: dataNorm.debtors.length,
+        portfoliosCount: dataNorm.portfolios.length,
         propertiesCount: dataNorm.properties.length,
         unitsCount: dataNorm.units.length,
         leasesCount: dataNorm.leases.length,

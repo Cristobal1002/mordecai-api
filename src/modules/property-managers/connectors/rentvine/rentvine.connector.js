@@ -26,6 +26,11 @@ class RentvineConnector extends BaseConnector {
       .map((item) => rentvineMapper.mapTenantContactToCanonicalDebtor(item))
       .filter((d) => d != null && d.externalId);
 
+    const rawPortfolios = await client.getAllPortfolios(100);
+    const portfoliosFromApi = rawPortfolios
+      .map((item) => rentvineMapper.mapPortfolioToCanonical(item))
+      .filter((p) => p != null && p.externalId);
+
     const rawLeases = await client.getAllLeasesExport(100);
     const leases = rawLeases
       .map((item) => rentvineMapper.mapLeaseExportItemToCanonical(item))
@@ -33,6 +38,13 @@ class RentvineConnector extends BaseConnector {
     const leaseBalances = rawLeases
       .map((item) => rentvineMapper.mapLeaseExportBalance(item))
       .filter((b) => b != null && b.balanceCents !== undefined);
+
+    const portfoliosByKey = new Map(portfoliosFromApi.map((p) => [p.externalId, p]));
+    for (const item of rawLeases) {
+      const port = rentvineMapper.mapPortfolioToCanonical(item?.portfolio ?? item);
+      if (port?.externalId) portfoliosByKey.set(port.externalId, port);
+    }
+    const portfolios = [...portfoliosByKey.values()];
 
     const propertiesByKey = new Map();
     const unitsByKey = new Map();
@@ -56,6 +68,7 @@ class RentvineConnector extends BaseConnector {
 
     return {
       debtors,
+      portfolios,
       leases,
       properties,
       units,
@@ -64,6 +77,7 @@ class RentvineConnector extends BaseConnector {
       leaseBalances: leaseBalances.length ? leaseBalances : undefined,
       stats: {
         totalDebtors: debtors.length,
+        totalPortfolios: portfolios.length,
         totalLeases: leases.length,
         totalProperties: properties.length,
         totalUnits: units.length,

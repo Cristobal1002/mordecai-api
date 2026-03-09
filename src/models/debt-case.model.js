@@ -135,6 +135,11 @@ export class DebtCase extends Model {
           allowNull: true,
           field: 'last_pms_sync_at',
         },
+        riskTier: {
+          type: DataTypes.STRING(16),
+          allowNull: true,
+          field: 'risk_tier',
+        },
         createdAt: {
           type: DataTypes.DATE,
           field: 'created_at',

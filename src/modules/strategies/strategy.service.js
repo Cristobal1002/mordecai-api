@@ -1,5 +1,14 @@
 import { strategyRepository } from './strategy.repository.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
+import { Op } from 'sequelize';
+import {
+  CollectionStrategy,
+  CollectionAutomation,
+  CollectionEvent,
+  CaseAutomationState,
+  CaseDispute,
+  PaymentAgreement,
+} from '../../models/index.js';
 import { sequelize } from '../../config/database.js';
 import { NotFoundError, ConflictError } from '../../errors/index.js';
 
@@ -147,5 +156,107 @@ export const strategyService = {
     const count = await strategyRepository.softDeleteStage(stageId);
     if (count === 0) throw new NotFoundError('Stage');
     return { deleted: true, stageId };
+  },
+
+  /**
+   * Check if strategy can be soft-deleted (no activity, disputes, or agreements).
+   * Returns { deletable, reason, activityCount, disputesCount, agreementsCount }.
+   */
+  getDeletability: async (tenantId, strategyId) => {
+    const strategy = await strategyRepository.findById(strategyId, tenantId);
+    if (!strategy) throw new NotFoundError('Strategy');
+
+    const automations = await CollectionAutomation.findAll({
+      where: { strategyId, tenantId },
+      attributes: ['id'],
+    });
+    const automationIds = automations.map((a) => a.id);
+    if (automationIds.length === 0) {
+      return { deletable: true, reason: null, activityCount: 0, disputesCount: 0, agreementsCount: 0 };
+    }
+
+    const [activityCount, disputesCount, agreementsCount] = await Promise.all([
+      CollectionEvent.count({ where: { automationId: { [Op.in]: automationIds } } }),
+      (async () => {
+        const enrolledDebtCaseIds = (
+          await CaseAutomationState.findAll({
+            where: { automationId: { [Op.in]: automationIds } },
+            attributes: ['debtCaseId'],
+            raw: true,
+          })
+        ).map((r) => r.debtCaseId).filter(Boolean);
+        if (enrolledDebtCaseIds.length === 0) return 0;
+        return CaseDispute.count({
+          where: { debtCaseId: { [Op.in]: enrolledDebtCaseIds }, status: 'OPEN' },
+        });
+      })(),
+      (async () => {
+        const enrolledDebtCaseIds = (
+          await CaseAutomationState.findAll({
+            where: { automationId: { [Op.in]: automationIds } },
+            attributes: ['debtCaseId'],
+            raw: true,
+          })
+        ).map((r) => r.debtCaseId).filter(Boolean);
+        if (enrolledDebtCaseIds.length === 0) return 0;
+        return PaymentAgreement.count({
+          where: { debtCaseId: { [Op.in]: enrolledDebtCaseIds } },
+        });
+      })(),
+    ]);
+
+    const hasBlockers = activityCount > 0 || disputesCount > 0 || agreementsCount > 0;
+    let reason = null;
+    if (hasBlockers) {
+      const parts = [];
+      if (activityCount > 0) parts.push(`${activityCount} activity event(s)`);
+      if (disputesCount > 0) parts.push(`${disputesCount} open dispute(s)`);
+      if (agreementsCount > 0) parts.push(`${agreementsCount} agreement(s)`);
+      reason = `Cannot delete: strategy has ${parts.join(', ')}. Use Inactivate instead.`;
+    }
+
+    return {
+      deletable: !hasBlockers,
+      reason,
+      activityCount,
+      disputesCount,
+      agreementsCount,
+    };
+  },
+
+  /**
+   * Soft-delete strategy. Only allowed when no activity, disputes, or agreements.
+   * Also deletes all automations that use this strategy (and their CaseAutomationState).
+   */
+  delete: async (tenantId, strategyId) => {
+    const { deletable, reason } = await strategyService.getDeletability(tenantId, strategyId);
+    if (!deletable) {
+      throw new ConflictError(reason ?? 'Strategy cannot be deleted.');
+    }
+
+    const strategy = await CollectionStrategy.findOne({ where: { id: strategyId, tenantId } });
+    if (!strategy) throw new NotFoundError('Strategy');
+
+    const automations = await CollectionAutomation.findAll({
+      where: { strategyId, tenantId },
+      attributes: ['id'],
+    });
+    const automationIds = automations.map((a) => a.id);
+
+    await sequelize.transaction(async (t) => {
+      if (automationIds.length > 0) {
+        await CaseAutomationState.destroy({
+          where: { automationId: { [Op.in]: automationIds } },
+          transaction: t,
+        });
+        await CollectionAutomation.destroy({
+          where: { id: { [Op.in]: automationIds } },
+          transaction: t,
+        });
+      }
+      await strategy.destroy({ transaction: t }); // paranoid: true → sets deletedAt
+    });
+
+    return { deleted: true, strategyId };
   },
 };

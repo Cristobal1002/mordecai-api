@@ -12,6 +12,8 @@ import {
   triggerSyncValidator,
   listPmsDebtorsValidator,
   listPmsLeasesValidator,
+  listPmsUnitsValidator,
+  listPmsPortfoliosValidator,
   getPmsStatsValidator,
   listPmsChargesValidator,
   listPmsPaymentsValidator,
@@ -39,6 +41,24 @@ router.get(
   listPmsLeasesValidator,
   validateRequest,
   propertyManagersController.listPmsLeases
+);
+
+// GET /api/v1/tenants/:tenantId/pms-units
+router.get(
+  '/:tenantId/pms-units',
+  requireAuth(),
+  listPmsUnitsValidator,
+  validateRequest,
+  propertyManagersController.listPmsUnits
+);
+
+// GET /api/v1/tenants/:tenantId/pms-portfolios
+router.get(
+  '/:tenantId/pms-portfolios',
+  requireAuth(),
+  listPmsPortfoliosValidator,
+  validateRequest,
+  propertyManagersController.listPmsPortfolios
 );
 
 // GET /api/v1/tenants/:tenantId/pms-stats

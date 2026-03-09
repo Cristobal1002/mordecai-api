@@ -45,6 +45,7 @@ export const getCasesValidator = [
   query('amountMaxCents').optional().isInt({ min: 0 }),
   query('sortBy').optional().isIn(['debtorName', 'amountDueCents', 'daysPastDue', 'approvalStatus']).withMessage('sortBy must be debtorName, amountDueCents, daysPastDue, or approvalStatus'),
   query('sortOrder').optional().isIn(['asc', 'desc']).withMessage('sortOrder must be asc or desc'),
+  query('search').optional().isString().withMessage('search must be a string'),
 ];
 
 export const bulkCasesValidator = [

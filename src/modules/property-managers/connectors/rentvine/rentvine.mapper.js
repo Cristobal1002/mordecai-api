@@ -66,6 +66,23 @@ export const rentvineMapper = {
   },
 
   /**
+   * Map portfolio to canonical for pms_portfolios.
+   * Accepts:
+   * - portfolios/search: { portfolio: { portfolioID, name }, statementSetting } (Rentvine nested format)
+   * - Flat: { portfolioID, name }
+   * - leases/export item.portfolio: { portfolioID, name }
+   */
+  mapPortfolioToCanonical(item) {
+    const p = item?.portfolio ?? item;
+    const pid = p?.portfolioID ?? p?.portfolioId ?? p?.id;
+    if (pid == null || pid === '') return null;
+    return {
+      externalId: String(pid),
+      name: (p?.name ?? '').trim() || null,
+    };
+  },
+
+  /**
    * Map one leases/export item to canonical lease for pms_leases.
    * Item: { lease, balances, unpaidCharges, property, unit, portfolio }.
    * Links to debtor via lease.tenants[0].contactID (same as debtors externalId from tenants/search).
@@ -103,8 +120,8 @@ export const rentvineMapper = {
 
   /**
    * Extract balance from leases/export item for ArBalance.
-   * Uses balances.unpaidTotalAmount → balanceCents (stored in ar_balances).
-   * Other fields available for future use: unpaidRentAmount, pastDueTotalAmount, pastDueRentAmount.
+   * Uses balances.unpaidTotalAmount → balanceCents.
+   * Also maps pastDueTotalAmount, pastDueRentAmount, unpaidRentAmount for Vencido KPI.
    */
   mapLeaseExportBalance(item, leaseExternalId) {
     const lease = item?.lease;
@@ -114,22 +131,31 @@ export const rentvineMapper = {
     const unpaidTotal = parseFloat(balances.unpaidTotalAmount, 10);
     if (Number.isNaN(unpaidTotal) || unpaidTotal < 0) return null;
     const balanceCents = Math.round(unpaidTotal * 100);
+    const pastDueTotal = parseFloat(balances.pastDueTotalAmount, 10);
+    const pastDueRent = parseFloat(balances.pastDueRentAmount, 10);
+    const unpaidRent = parseFloat(balances.unpaidRentAmount, 10);
     return {
       leaseExternalId: externalId,
       balanceCents,
       asOfDate: new Date().toISOString().slice(0, 10),
+      pastDueTotalCents: !Number.isNaN(pastDueTotal) && pastDueTotal >= 0 ? Math.round(pastDueTotal * 100) : null,
+      pastDueRentCents: !Number.isNaN(pastDueRent) && pastDueRent >= 0 ? Math.round(pastDueRent * 100) : null,
+      unpaidRentCents: !Number.isNaN(unpaidRent) && unpaidRent >= 0 ? Math.round(unpaidRent * 100) : null,
     };
   },
 
   /**
    * Map leases/export item.property to canonical property for pms_properties.
+   * Adds portfolioExternalId from item.portfolio when present.
    */
   mapLeaseExportProperty(item) {
     const p = item?.property;
+    const port = item?.portfolio;
     if (!p?.propertyID) return null;
     return {
       externalId: String(p.propertyID),
       name: p.name?.trim() || null,
+      portfolioExternalId: port?.portfolioID != null ? String(port.portfolioID) : undefined,
       address: {
         line1: p.address ?? (p.streetNumber && p.streetName ? `${p.streetNumber} ${p.streetName}` : null),
         line2: p.address2 ?? null,

@@ -70,4 +70,24 @@ export const strategyController = {
       next(error);
     }
   },
+
+  getDeletability: async (req, res, next) => {
+    try {
+      const { tenantId, id } = req.params;
+      const result = await strategyService.getDeletability(tenantId, id);
+      res.ok(result, 'Deletability check completed');
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  delete: async (req, res, next) => {
+    try {
+      const { tenantId, id } = req.params;
+      const result = await strategyService.delete(tenantId, id);
+      res.ok(result, 'Strategy deleted successfully');
+    } catch (error) {
+      next(error);
+    }
+  },
 };

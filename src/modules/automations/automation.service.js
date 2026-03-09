@@ -252,7 +252,7 @@ export const automationService = {
     };
   },
 
-  getCases: async (tenantId, automationId, limit = 100, offset = 0, tab = null, filters = {}, sortBy = null, sortOrder = 'ASC') => {
+  getCases: async (tenantId, automationId, limit = 100, offset = 0, tab = null, filters = {}, sortBy = null, sortOrder = 'ASC', search = null) => {
     const automation = await automationRepository.findById(automationId, tenantId);
     if (!automation) throw new NotFoundError('Automation');
 
@@ -262,7 +262,8 @@ export const automationService = {
       filters.dpdMin != null ||
       filters.dpdMax != null ||
       filters.amountMinCents != null ||
-      filters.amountMaxCents != null;
+      filters.amountMaxCents != null ||
+      (search && search.trim().length > 0);
     if (tab === 'disputes' && !useFilters) {
       const enrolledIds = await automationRepository.findEnrolledDebtCaseIds(automationId);
       const rows = await automationRepository.findDisputesByAutomation(automationId, tenantId, {
@@ -285,14 +286,26 @@ export const automationService = {
         const debtor = dc.debtor || {};
         const meta = dc.meta || {};
         const pmsLease = dc.pmsLease || {};
+        const pmsUnit = pmsLease?.pmsUnit || {};
+        const pmsProperty = pmsUnit?.pmsProperty || {};
         const leaseNumber =
           meta.lease_number ?? meta.leaseNumber ?? pmsLease.leaseNumber ?? null;
+        const unitNumber = pmsUnit.unitNumber ?? null;
+        const propertyName = pmsProperty.name ?? null;
+        const unitDisplay =
+          propertyName && unitNumber
+            ? `${propertyName} - ${unitNumber}`
+            : unitNumber && leaseNumber
+              ? `${unitNumber} (${leaseNumber})`
+              : unitNumber ?? leaseNumber ?? propertyName ?? null;
         return {
           id: plain.id,
           debtCaseId: plain.debtCaseId,
           debtorName: debtor.fullName,
           debtorEmail: debtor.email,
           leaseNumber,
+          unitDisplay,
+          leaseStatus: pmsLease?.status ?? null,
           amountDueCents: dc.amountDueCents,
           daysPastDue: dc.daysPastDue,
           reason: plain.reason,
@@ -310,6 +323,8 @@ export const automationService = {
       filters: useFilters ? filters : undefined,
       sortBy,
       sortOrder,
+      search: search && search.trim() ? search.trim() : null,
+      tenantId,
     };
     const rows = await automationRepository.findCaseStates(automationId, opts);
     const total = await automationRepository.countCaseStates(automationId, {}, opts);
@@ -320,8 +335,18 @@ export const automationService = {
       const debtor = debtCase.debtor || {};
       const meta = debtCase.meta || {};
       const pmsLease = debtCase.pmsLease || {};
+      const pmsUnit = pmsLease.pmsUnit || {};
+      const pmsProperty = pmsUnit.pmsProperty || {};
       const leaseNumber =
         meta.lease_number ?? meta.leaseNumber ?? pmsLease.leaseNumber ?? null;
+      const unitNumber = pmsUnit.unitNumber ?? null;
+      const propertyName = pmsProperty.name ?? null;
+      const unitDisplay =
+        propertyName && unitNumber
+          ? `${propertyName} - ${unitNumber}`
+          : unitNumber && leaseNumber
+            ? `${unitNumber} (${leaseNumber})`
+            : unitNumber ?? leaseNumber ?? propertyName ?? null;
       return {
         id: plain.id,
         debtCaseId: plain.debtCaseId,
@@ -332,6 +357,8 @@ export const automationService = {
         daysPastDue: debtCase.daysPastDue,
         currency: debtCase.currency,
         leaseNumber,
+        unitDisplay,
+        leaseStatus: pmsLease.status ?? null,
         pmsLeaseId: debtCase.pmsLeaseId ?? debtCase.pms_lease_id ?? null,
         approvalStatus: debtCase.approvalStatus ?? debtCase.approval_status,
         currentStage: plain.currentStage

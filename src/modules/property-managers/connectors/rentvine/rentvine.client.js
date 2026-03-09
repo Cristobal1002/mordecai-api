@@ -84,6 +84,30 @@ export function createRentvineClient(credentials) {
     },
 
     /**
+     * GET /portfolios/search?page=&pageSize=
+     * Returns array of { portfolio: { portfolioID, name }, statementSetting } (Rentvine nested format).
+     */
+    async getPortfoliosSearch(page = 1, pageSize = 100) {
+      const data = await this.get('/portfolios/search', { page, pageSize: Math.min(pageSize, 100) });
+      if (Array.isArray(data)) return data;
+      if (data && typeof data === 'object' && Array.isArray(data.data)) return data.data;
+      if (data && typeof data === 'object' && Array.isArray(data.items)) return data.items;
+      return [];
+    },
+
+    async getAllPortfolios(pageSize = 100) {
+      const all = [];
+      let page = 1;
+      let chunk;
+      do {
+        chunk = await this.getPortfoliosSearch(page, pageSize);
+        all.push(...chunk);
+        page += 1;
+      } while (chunk.length >= pageSize);
+      return all;
+    },
+
+    /**
      * GET /tenants/search?page=&pageSize=
      * Returns array of { contact: { contactID, name, email, phone, address, ... } }.
      * Rentvine max pageSize is 100.

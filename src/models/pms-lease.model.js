@@ -20,6 +20,7 @@ export class PmsLease extends Model {
         moveOutDate: { type: DataTypes.DATEONLY, field: 'move_out_date' },
         lastNoteSummary: { type: DataTypes.TEXT, field: 'last_note_summary' },
         inCollections: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'in_collections' },
+        riskTier: { type: DataTypes.STRING(16), defaultValue: 'al_dia', field: 'risk_tier' },
         lastExternalUpdatedAt: { type: DataTypes.DATE, allowNull: true, field: 'last_external_updated_at' },
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },

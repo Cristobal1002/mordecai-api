@@ -20,8 +20,9 @@ export class CollectionStrategy extends Model {
         stopOnPayment: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'stop_on_payment' },
         createdAt: { type: DataTypes.DATE, field: 'created_at' },
         updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
+        deletedAt: { type: DataTypes.DATE, field: 'deleted_at' },
       },
-      { sequelize, modelName: 'CollectionStrategy', tableName: 'collection_strategies', timestamps: true, underscored: true }
+      { sequelize, modelName: 'CollectionStrategy', tableName: 'collection_strategies', timestamps: true, underscored: true, paranoid: true }
     );
     return CollectionStrategy;
   }

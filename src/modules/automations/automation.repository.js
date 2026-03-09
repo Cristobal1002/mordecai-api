@@ -7,6 +7,8 @@ import {
   Debtor,
   PmsConnection,
   PmsLease,
+  PmsUnit,
+  PmsProperty,
   CollectionStage,
   PaymentAgreement,
   CaseDispute,
@@ -68,11 +70,12 @@ export const automationRepository = {
 
   create: async (data, options = {}) => {
     try {
+      const status = data.status ?? 'paused';
       return await CollectionAutomation.create(
         {
           ...data,
-          status: data.status ?? 'active',
-          startedAt: data.startedAt !== undefined ? data.startedAt : new Date(),
+          status,
+          startedAt: data.startedAt !== undefined ? data.startedAt : status === 'active' ? new Date() : null,
         },
         options
       );
@@ -110,7 +113,7 @@ export const automationRepository = {
 
   countCaseStates: async (automationId, whereExtra = {}, options = {}) => {
     try {
-      const { tab, filters = {} } = options;
+      const { tab, filters = {}, search, tenantId } = options;
       const statusArr = filters.status;
       const stageArr = filters.stage;
       const dpdMin = filters.dpdMin;
@@ -119,6 +122,50 @@ export const automationRepository = {
       const amountMaxCents = filters.amountMaxCents;
       let debtCaseWhere;
       let stateStatuses = ['active'];
+      let searchDebtCaseIds = null;
+      if (search && String(search).trim() && tenantId) {
+        const q = `%${String(search).trim().replace(/%/g, '\\%')}%`;
+        const [byDebtor, byLease, byUnit, byProperty] = await Promise.all([
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{ model: Debtor, as: 'debtor', required: true, where: { fullName: { [Op.iLike]: q } }, attributes: [] }],
+            attributes: ['id'],
+            raw: true,
+          }),
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{ model: PmsLease, as: 'pmsLease', required: true, where: { leaseNumber: { [Op.iLike]: q } }, attributes: [] }],
+            attributes: ['id'],
+            raw: true,
+          }),
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{
+              model: PmsLease,
+              as: 'pmsLease',
+              required: true,
+              include: [{ model: PmsUnit, as: 'pmsUnit', required: true, where: { unitNumber: { [Op.iLike]: q } }, attributes: [] }],
+              attributes: [],
+            }],
+            attributes: ['id'],
+            raw: true,
+          }),
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{
+              model: PmsLease,
+              as: 'pmsLease',
+              required: true,
+              include: [{ model: PmsUnit, as: 'pmsUnit', required: true, include: [{ model: PmsProperty, as: 'pmsProperty', required: true, where: { name: { [Op.iLike]: q } }, attributes: [] }], attributes: [] }],
+              attributes: [],
+            }],
+            attributes: ['id'],
+            raw: true,
+          }),
+        ]);
+        const allIds = [...byDebtor, ...byLease, ...byUnit, ...byProperty].map((r) => r.id).filter(Boolean);
+        searchDebtCaseIds = [...new Set(allIds)];
+      }
 
       if (statusArr && statusArr.length > 0) {
         const approvalOnly = statusArr.filter((s) => s !== 'IN_DISPUTE');
@@ -177,8 +224,13 @@ export const automationRepository = {
         });
       }
 
+      const countWhere = { automationId, status: { [Op.in]: stateStatuses }, ...whereExtra };
+      if (searchDebtCaseIds !== null) {
+        if (searchDebtCaseIds.length === 0) return 0;
+        countWhere.debtCaseId = { [Op.in]: searchDebtCaseIds };
+      }
       return await CaseAutomationState.count({
-        where: { automationId, status: { [Op.in]: stateStatuses }, ...whereExtra },
+        where: countWhere,
         include: includeOpts.length > 0 ? includeOpts : undefined,
         distinct: true,
         ...options,
@@ -191,7 +243,7 @@ export const automationRepository = {
 
   findCaseStates: async (automationId, options = {}) => {
     try {
-      const { tab, filters = {} } = options;
+      const { tab, filters = {}, search, tenantId } = options;
       const statusArr = filters.status;
       const stageArr = filters.stage;
       const dpdMin = filters.dpdMin;
@@ -201,6 +253,50 @@ export const automationRepository = {
       let debtCaseWhere;
       let stateStatuses = ['active'];
       let excludeDisputedFromApproved = false;
+      let searchDebtCaseIds = null;
+      if (search && String(search).trim() && tenantId) {
+        const q = `%${String(search).trim().replace(/%/g, '\\%')}%`;
+        const [byDebtor, byLease, byUnit, byProperty] = await Promise.all([
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{ model: Debtor, as: 'debtor', required: true, where: { fullName: { [Op.iLike]: q } }, attributes: [] }],
+            attributes: ['id'],
+            raw: true,
+          }),
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{ model: PmsLease, as: 'pmsLease', required: true, where: { leaseNumber: { [Op.iLike]: q } }, attributes: [] }],
+            attributes: ['id'],
+            raw: true,
+          }),
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{
+              model: PmsLease,
+              as: 'pmsLease',
+              required: true,
+              include: [{ model: PmsUnit, as: 'pmsUnit', required: true, where: { unitNumber: { [Op.iLike]: q } }, attributes: [] }],
+              attributes: [],
+            }],
+            attributes: ['id'],
+            raw: true,
+          }),
+          DebtCase.findAll({
+            where: { tenantId },
+            include: [{
+              model: PmsLease,
+              as: 'pmsLease',
+              required: true,
+              include: [{ model: PmsUnit, as: 'pmsUnit', required: true, include: [{ model: PmsProperty, as: 'pmsProperty', required: true, where: { name: { [Op.iLike]: q } }, attributes: [] }], attributes: [] }],
+              attributes: [],
+            }],
+            attributes: ['id'],
+            raw: true,
+          }),
+        ]);
+        const allIds = [...byDebtor, ...byLease, ...byUnit, ...byProperty].map((r) => r.id).filter(Boolean);
+        searchDebtCaseIds = [...new Set(allIds)];
+      }
 
       if (statusArr && statusArr.length > 0) {
         const approvalOnly = statusArr.filter((s) => s !== 'IN_DISPUTE');
@@ -271,8 +367,13 @@ export const automationRepository = {
         ];
       }
 
+      const mainWhere = { automationId, status: { [Op.in]: stateStatuses } };
+      if (searchDebtCaseIds !== null) {
+        if (searchDebtCaseIds.length === 0) return [];
+        mainWhere.debtCaseId = { [Op.in]: searchDebtCaseIds };
+      }
       const rows = await CaseAutomationState.findAll({
-        where: { automationId, status: { [Op.in]: stateStatuses } },
+        where: mainWhere,
         include: [
           {
             model: DebtCase,
@@ -281,7 +382,21 @@ export const automationRepository = {
             where: debtCaseWhere,
             include: [
               { model: Debtor, as: 'debtor', attributes: ['id', 'fullName', 'email', 'phone'] },
-              { model: PmsLease, as: 'pmsLease', required: false, attributes: ['id', 'leaseNumber'] },
+              {
+                model: PmsLease,
+                as: 'pmsLease',
+                required: false,
+                attributes: ['id', 'leaseNumber', 'status'],
+                include: [
+                  {
+                    model: PmsUnit,
+                    as: 'pmsUnit',
+                    required: false,
+                    attributes: ['id', 'unitNumber'],
+                    include: [{ model: PmsProperty, as: 'pmsProperty', required: false, attributes: ['id', 'name'] }],
+                  },
+                ],
+              },
             ],
           },
           currentStageInclude,
@@ -326,7 +441,21 @@ export const automationRepository = {
             required: true,
             include: [
               { model: Debtor, as: 'debtor', attributes: ['id', 'fullName', 'email', 'phone'] },
-              { model: PmsLease, as: 'pmsLease', required: false, attributes: ['id', 'leaseNumber'] },
+              {
+                model: PmsLease,
+                as: 'pmsLease',
+                required: false,
+                attributes: ['id', 'leaseNumber', 'status'],
+                include: [
+                  {
+                    model: PmsUnit,
+                    as: 'pmsUnit',
+                    required: false,
+                    attributes: ['id', 'unitNumber'],
+                    include: [{ model: PmsProperty, as: 'pmsProperty', required: false, attributes: ['id', 'name'] }],
+                  },
+                ],
+              },
             ],
           },
         ],

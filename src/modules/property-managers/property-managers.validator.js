@@ -104,6 +104,29 @@ export const listPmsLeasesValidator = [
 
 export const getPmsStatsValidator = [tenantIdParam];
 
+const UNIT_SORT_FIELDS = ['unitNumber', 'createdAt'];
+export const listPmsUnitsValidator = [
+  tenantIdParam,
+  query('connectionId').optional().isUUID().withMessage('connectionId must be a valid UUID'),
+  query('propertyId').optional().isUUID().withMessage('propertyId must be a valid UUID'),
+  query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('limit must be between 1 and 1000'),
+  query('offset').optional().isInt({ min: 0 }).withMessage('offset must be a non-negative integer'),
+  query('search').optional().isString().trim().isLength({ max: 200 }).withMessage('search must be at most 200 characters'),
+  query('sortBy').optional().isIn(UNIT_SORT_FIELDS).withMessage(`sortBy must be one of: ${UNIT_SORT_FIELDS.join(', ')}`),
+  query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
+];
+
+const PORTFOLIO_SORT_FIELDS = ['name', 'createdAt'];
+export const listPmsPortfoliosValidator = [
+  tenantIdParam,
+  query('connectionId').optional().isUUID().withMessage('connectionId must be a valid UUID'),
+  query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('limit must be between 1 and 1000'),
+  query('offset').optional().isInt({ min: 0 }).withMessage('offset must be a non-negative integer'),
+  query('search').optional().isString().trim().isLength({ max: 200 }).withMessage('search must be at most 200 characters'),
+  query('sortBy').optional().isIn(PORTFOLIO_SORT_FIELDS).withMessage(`sortBy must be one of: ${PORTFOLIO_SORT_FIELDS.join(', ')}`),
+  query('sortOrder').optional().isIn(SORT_ORDERS).withMessage('sortOrder must be asc or desc'),
+];
+
 const CHARGE_SORT_FIELDS = ['dueDate', 'postDate', 'amountCents', 'createdAt'];
 export const listPmsChargesValidator = [
   tenantIdParam,

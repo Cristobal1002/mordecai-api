@@ -8,6 +8,8 @@ import {
   createStageValidator,
   updateStageValidator,
   deleteStageValidator,
+  getDeletabilityValidator,
+  deleteStrategyValidator,
 } from './strategy.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 
@@ -47,6 +49,22 @@ router.delete(
   deleteStageValidator,
   validateRequest,
   strategyController.deleteStage
+);
+
+// GET /api/v1/tenants/:tenantId/strategies/:id/deletability
+router.get(
+  '/:tenantId/strategies/:id/deletability',
+  getDeletabilityValidator,
+  validateRequest,
+  strategyController.getDeletability
+);
+
+// DELETE /api/v1/tenants/:tenantId/strategies/:id
+router.delete(
+  '/:tenantId/strategies/:id',
+  deleteStrategyValidator,
+  validateRequest,
+  strategyController.delete
 );
 
 export default router;
