@@ -127,6 +127,15 @@ export const reduceCallState = ({ state, action, slots, context }) => {
     return result;
   }
 
+  // Once a call is closed, always keep it closed and ask runtime to end call.
+  if (state === CALL_STATES.CLOSE) {
+    result.nextState = CALL_STATES.CLOSE;
+    result.toolAction = CALL_ACTIONS.END_CALL;
+    result.speakBack = `Thank you for speaking with ${tenantName}. Goodbye.`;
+    result.intentLabel = "already_closed";
+    return result;
+  }
+
   if (state === CALL_STATES.VERIFY_IDENTITY) {
     if (
       action === CALL_DIALOG_ACTIONS.VERIFY_IDENTITY_NO ||
