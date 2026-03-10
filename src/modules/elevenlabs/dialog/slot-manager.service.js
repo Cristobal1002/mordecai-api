@@ -188,8 +188,13 @@ export const buildDisputeProposalFromSlots = (slots = {}) =>
     delivery_email: slots.delivery_email || null,
   });
 
-export const hasMeaningfulProposal = (proposal = {}) =>
-  Object.values(proposal).some((value) => isMeaningfulValue(value));
+export const hasMeaningfulProposal = (proposal = null) => {
+  const source =
+    proposal && typeof proposal === "object" && !Array.isArray(proposal)
+      ? proposal
+      : {};
+  return Object.values(source).some((value) => isMeaningfulValue(value));
+};
 
 export const proposalsAreEqual = (left = null, right = null) =>
   serializeStable(left) === serializeStable(right);
