@@ -128,9 +128,10 @@ const looksLikeHtmlTemplate = (value) => {
 };
 
 const resolveTemplateName = (stageRules = {}) => {
+  // Stage email template IDs (UUIDs) point to DB rows in tenant_message_templates.
+  // They are not Nunjucks file names and must not be used for file rendering.
   const customName =
     stageRules.email_template_key ||
-    stageRules.email_template_id ||
     stageRules.emailTemplateKey ||
     null;
 
