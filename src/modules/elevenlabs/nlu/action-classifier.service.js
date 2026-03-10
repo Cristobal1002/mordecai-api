@@ -72,6 +72,37 @@ const toConfidence = (value, fallback = 0.8) => {
   return numeric;
 };
 
+const normalizeUtterance = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const looksAffirmative = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  if (/\b(yes|yeah|yep|correct|right|affirmative|si|s[ií])\b/.test(normalized)) {
+    return true;
+  }
+  if (/\b(i am|im|it's me|it is me|this is|speaking)\b/.test(normalized)) {
+    return true;
+  }
+  return false;
+};
+
+const looksNegative = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  if (/\b(no|nope|negative)\b/.test(normalized)) return true;
+  if (/\b(not me|wrong person|not the person|no soy)\b/.test(normalized)) {
+    return true;
+  }
+  return false;
+};
+
 const resolveMappedAction = (candidate) => {
   const normalized = normalizeActionToken(candidate);
   if (!normalized) return null;
@@ -99,7 +130,12 @@ const pickStructuredActionCandidate = (intentHint, entities = {}) => {
   return null;
 };
 
-export const classifyCallAction = ({ state, intentHint, entities = {} }) => {
+export const classifyCallAction = ({
+  state,
+  intentHint,
+  entities = {},
+  utterance,
+}) => {
   const structuredAction = pickStructuredActionCandidate(intentHint, entities);
   if (structuredAction) {
     return {
@@ -183,6 +219,23 @@ export const classifyCallAction = ({ state, intentHint, entities = {} }) => {
         source: "entity_flag",
       };
     }
+
+    const negative = looksNegative(utterance);
+    const affirmative = looksAffirmative(utterance);
+    if (negative && !affirmative) {
+      return {
+        action: CALL_DIALOG_ACTIONS.VERIFY_IDENTITY_NO,
+        confidence: 0.72,
+        source: "utterance_heuristic",
+      };
+    }
+    if (affirmative && !negative) {
+      return {
+        action: CALL_DIALOG_ACTIONS.VERIFY_IDENTITY_YES,
+        confidence: 0.72,
+        source: "utterance_heuristic",
+      };
+    }
   }
 
   const agreementConfirmed = parseBoolean(
@@ -203,6 +256,25 @@ export const classifyCallAction = ({ state, intentHint, entities = {} }) => {
       confidence: 0.86,
       source: "entity_flag",
     };
+  }
+
+  if (state === CALL_STATES.CONFIRM_AGREEMENT) {
+    const negative = looksNegative(utterance);
+    const affirmative = looksAffirmative(utterance);
+    if (negative && !affirmative) {
+      return {
+        action: CALL_DIALOG_ACTIONS.REJECT_AGREEMENT,
+        confidence: 0.72,
+        source: "utterance_heuristic",
+      };
+    }
+    if (affirmative && !negative) {
+      return {
+        action: CALL_DIALOG_ACTIONS.CONFIRM_AGREEMENT,
+        confidence: 0.72,
+        source: "utterance_heuristic",
+      };
+    }
   }
 
   if (entities?.plan_type || entities?.planType) {

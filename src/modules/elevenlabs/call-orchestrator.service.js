@@ -438,6 +438,7 @@ export const orchestrateCallStepFromTool = async ({
     state: normalizedState,
     intentHint,
     entities,
+    utterance: userUtterance,
   });
 
   const slotPatchFromExtractor = extractSlotPatch({

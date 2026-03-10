@@ -52,6 +52,12 @@ const parseToolPayload = (body) => {
 const parseOrchestratorPayload = (body) => {
   const parsed = parseToolPayload(body);
   const candidate = parsed.proposal || {};
+  const pickDefinedValue = (...values) => {
+    for (const value of values) {
+      if (value !== undefined && value !== null && value !== "") return value;
+    }
+    return null;
+  };
   const compactObject = (value) =>
     Object.entries(value).reduce((result, [key, fieldValue]) => {
       if (fieldValue === undefined || fieldValue === null || fieldValue === "") {
@@ -61,71 +67,71 @@ const parseOrchestratorPayload = (body) => {
       return result;
     }, {});
   const topLevelEntities = compactObject({
-    action: candidate.action || body?.action || null,
-    confidence: candidate.confidence || body?.confidence || null,
-    plan_type:
-      candidate.plan_type ||
-      candidate.planType ||
-      body?.plan_type ||
-      body?.planType ||
-      null,
-    upfront_amount_cents:
-      candidate.upfront_amount_cents ||
-      candidate.upfrontAmountCents ||
-      candidate.upfront_amount ||
-      body?.upfront_amount_cents ||
-      body?.upfrontAmountCents ||
-      body?.upfront_amount ||
-      null,
-    installments_count:
-      candidate.installments_count ||
-      candidate.installmentsCount ||
-      body?.installments_count ||
-      body?.installmentsCount ||
-      null,
-    delivery_channel:
-      candidate.delivery_channel ||
-      candidate.deliveryChannel ||
-      candidate.channel ||
-      body?.delivery_channel ||
-      body?.deliveryChannel ||
-      body?.channel ||
-      null,
-    delivery_email:
-      candidate.delivery_email ||
-      candidate.deliveryEmail ||
-      candidate.email ||
-      body?.delivery_email ||
-      body?.deliveryEmail ||
-      body?.email ||
-      null,
-    dispute_reason:
-      candidate.dispute_reason ||
-      candidate.disputeReason ||
-      candidate.reason ||
-      body?.dispute_reason ||
-      body?.disputeReason ||
-      body?.reason ||
-      null,
-    identity_verified:
-      candidate.identity_verified ||
-      candidate.identityVerified ||
-      body?.identity_verified ||
-      body?.identityVerified ||
-      null,
-    agreement_confirmed:
-      candidate.agreement_confirmed ||
-      candidate.agreementConfirmed ||
-      body?.agreement_confirmed ||
-      body?.agreementConfirmed ||
-      null,
-    callback_requested:
-      candidate.callback_requested ||
-      candidate.callbackRequested ||
-      body?.callback_requested ||
-      body?.callbackRequested ||
-      null,
-    goodbye: candidate.goodbye || body?.goodbye || null,
+    action: pickDefinedValue(candidate.action, body?.action),
+    confidence: pickDefinedValue(candidate.confidence, body?.confidence),
+    plan_type: pickDefinedValue(
+      candidate.plan_type,
+      candidate.planType,
+      body?.plan_type,
+      body?.planType,
+    ),
+    upfront_amount_cents: pickDefinedValue(
+      candidate.upfront_amount_cents,
+      candidate.upfrontAmountCents,
+      candidate.upfront_amount,
+      body?.upfront_amount_cents,
+      body?.upfrontAmountCents,
+      body?.upfront_amount,
+    ),
+    installments_count: pickDefinedValue(
+      candidate.installments_count,
+      candidate.installmentsCount,
+      body?.installments_count,
+      body?.installmentsCount,
+    ),
+    delivery_channel: pickDefinedValue(
+      candidate.delivery_channel,
+      candidate.deliveryChannel,
+      candidate.channel,
+      body?.delivery_channel,
+      body?.deliveryChannel,
+      body?.channel,
+    ),
+    delivery_email: pickDefinedValue(
+      candidate.delivery_email,
+      candidate.deliveryEmail,
+      candidate.email,
+      body?.delivery_email,
+      body?.deliveryEmail,
+      body?.email,
+    ),
+    dispute_reason: pickDefinedValue(
+      candidate.dispute_reason,
+      candidate.disputeReason,
+      candidate.reason,
+      body?.dispute_reason,
+      body?.disputeReason,
+      body?.reason,
+    ),
+    identity_verified: pickDefinedValue(
+      candidate.identity_verified,
+      candidate.identityVerified,
+      body?.identity_verified,
+      body?.identityVerified,
+    ),
+    agreement_confirmed: pickDefinedValue(
+      candidate.agreement_confirmed,
+      candidate.agreementConfirmed,
+      body?.agreement_confirmed,
+      body?.agreementConfirmed,
+    ),
+    callback_requested: pickDefinedValue(
+      candidate.callback_requested,
+      candidate.callbackRequested,
+      body?.callback_requested,
+      body?.callbackRequested,
+    ),
+    goodbye: pickDefinedValue(candidate.goodbye, body?.goodbye),
   });
   const payloadEntities = {
     ...(candidate.entities && typeof candidate.entities === "object"

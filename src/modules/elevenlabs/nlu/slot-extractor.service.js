@@ -181,6 +181,24 @@ const extractInstallmentsCountFromText = (text) => {
   return null;
 };
 
+const extractIdentityVerifiedFromText = ({ text, currentState }) => {
+  if (currentState !== CALL_STATES.VERIFY_IDENTITY) return null;
+
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized) return null;
+
+  const negative =
+    /\b(no|nope|negative)\b/.test(normalized) ||
+    /\b(not me|wrong person|not the person|no soy)\b/.test(normalized);
+  const affirmative =
+    /\b(yes|yeah|yep|correct|right|affirmative|si|s[ií])\b/.test(normalized) ||
+    /\b(i am|im|it's me|it is me|this is|speaking)\b/.test(normalized);
+
+  if (negative && !affirmative) return false;
+  if (affirmative && !negative) return true;
+  return null;
+};
+
 const extractPlanTypeFromText = ({ text, allowedPlanTypes = [] }) => {
   const normalized = String(text || "").toLowerCase();
   if (!normalized) return null;
@@ -337,6 +355,19 @@ export const extractSlotPatch = ({
     source.dispute_reason ?? source.disputeReason ?? source.reason,
   );
   if (disputeReason) patch.dispute_reason = disputeReason;
+
+  const identityVerified = parseBoolean(
+    source.identity_verified ?? source.identityVerified ?? source.is_identity_verified,
+  );
+  if (identityVerified !== null) {
+    patch.identity_verified = identityVerified;
+  } else {
+    const identityFromText = extractIdentityVerifiedFromText({
+      text: normalizedUtterance,
+      currentState,
+    });
+    if (identityFromText !== null) patch.identity_verified = identityFromText;
+  }
 
   const disputeDetected = parseBoolean(
     source.dispute_detected ?? source.disputeDetected ?? source.is_dispute,
