@@ -282,6 +282,20 @@ export const reduceCallState = ({ state, action, slots, context }) => {
   }
 
   if (progressState === CALL_STATES.EXECUTE_AGREEMENT) {
+    if (
+      ![CALL_STATES.CONFIRM_AGREEMENT, CALL_STATES.EXECUTE_AGREEMENT].includes(
+        state,
+      )
+    ) {
+      result.nextState = CALL_STATES.CONFIRM_AGREEMENT;
+      result.speakBack =
+        `${buildAgreementSummary({ slots, planCatalog, currency })} ` +
+        "Please confirm if you want me to create the payment agreement now.";
+      result.intentLabel = "agreement_pending_confirmation";
+      result.flags.requestAgreementSnapshot = true;
+      return result;
+    }
+
     result.nextState = CALL_STATES.EXECUTE_AGREEMENT;
     result.toolAction = CALL_ACTIONS.CALL_CREATE_PAYMENT_AGREEMENT;
     result.speakBack = "Understood. I will create your payment agreement now.";

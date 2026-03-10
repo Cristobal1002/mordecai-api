@@ -181,6 +181,73 @@ const extractInstallmentsCountFromText = (text) => {
   return null;
 };
 
+const extractPlanTypeFromText = ({ text, allowedPlanTypes = [] }) => {
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized) return null;
+
+  const hasHalf = /\bhalf\b|\b50\s*%\b|\b50\/50\b/.test(normalized);
+  const hasFull =
+    /\bfull\b|\bpay in full\b|\bone payment\b|\ball at once\b|\bcomplete payment\b/.test(
+      normalized,
+    );
+  const hasInstallments =
+    /\binstallments?\b|\bpayment plan\b|\bmonthly\b|\bcuotas?\b/.test(
+      normalized,
+    );
+
+  const rankedCandidates = [];
+  if (hasHalf) rankedCandidates.push("HALF");
+  if (hasFull) rankedCandidates.push("FULL");
+  if (hasInstallments) rankedCandidates.push("INSTALLMENTS_4");
+
+  for (const candidate of rankedCandidates) {
+    if (
+      !Array.isArray(allowedPlanTypes) ||
+      allowedPlanTypes.length === 0 ||
+      allowedPlanTypes.includes(candidate)
+    ) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
+const extractDeliveryChannelFromText = ({
+  text,
+  allowedDeliveryChannels = [],
+}) => {
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized) return null;
+
+  const asksEmail = /\be-?mail\b|\bcorreo\b|\bmail\b/.test(normalized);
+  const asksSms =
+    /\bsms\b|\btext\b|\btext message\b|\bmessage\b|\bmensaje\b/.test(
+      normalized,
+    );
+  const asksBoth = /\bboth\b|\ball\b|\beither\b|\bany\b/.test(normalized);
+
+  if (asksBoth || (asksEmail && asksSms)) {
+    const channel =
+      normalizeDeliveryChannel("both", allowedDeliveryChannels) ||
+      normalizeDeliveryChannel("email", allowedDeliveryChannels) ||
+      normalizeDeliveryChannel("sms", allowedDeliveryChannels);
+    if (channel) return channel;
+  }
+
+  if (asksEmail) {
+    const channel = normalizeDeliveryChannel("email", allowedDeliveryChannels);
+    if (channel) return channel;
+  }
+
+  if (asksSms) {
+    const channel = normalizeDeliveryChannel("sms", allowedDeliveryChannels);
+    if (channel) return channel;
+  }
+
+  return null;
+};
+
 const mergeEntitySources = (entities = {}) => {
   const rawEntities = entities && typeof entities === "object" ? entities : {};
   const nestedSlots =
@@ -204,7 +271,12 @@ export const extractSlotPatch = ({
   const normalizedUtterance = normalizeText(utterance);
   const patch = {};
 
-  const planType = normalizePlanCode(source.plan_type ?? source.planType);
+  const planType =
+    normalizePlanCode(source.plan_type ?? source.planType) ||
+    extractPlanTypeFromText({
+      text: normalizedUtterance,
+      allowedPlanTypes,
+    });
   if (
     planType &&
     (allowedPlanTypes.length === 0 || allowedPlanTypes.includes(planType))
@@ -212,10 +284,15 @@ export const extractSlotPatch = ({
     patch.plan_type = planType;
   }
 
-  const deliveryChannel = normalizeDeliveryChannel(
-    source.delivery_channel ?? source.deliveryChannel ?? source.channel,
-    allowedDeliveryChannels,
-  );
+  const deliveryChannel =
+    normalizeDeliveryChannel(
+      source.delivery_channel ?? source.deliveryChannel ?? source.channel,
+      allowedDeliveryChannels,
+    ) ||
+    extractDeliveryChannelFromText({
+      text: normalizedUtterance,
+      allowedDeliveryChannels,
+    });
   if (deliveryChannel) patch.delivery_channel = deliveryChannel;
 
   const deliveryEmailFromSource = normalizeEmail(
