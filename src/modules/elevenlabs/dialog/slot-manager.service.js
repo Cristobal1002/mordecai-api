@@ -80,21 +80,6 @@ export const applyAgreementDefaults = ({
   balanceCents,
   allowedDeliveryChannels = [],
 }) => {
-  const resolvePreferredDeliveryChannel = (candidates) => {
-    if (!Array.isArray(candidates) || candidates.length === 0) return null;
-    const normalized = candidates
-      .map((item) =>
-        String(item || "")
-          .trim()
-          .toLowerCase(),
-      )
-      .filter(Boolean);
-    if (normalized.includes("email")) return "email";
-    if (normalized.includes("sms")) return "sms";
-    if (normalized.includes("both")) return "both";
-    return normalized[0] || null;
-  };
-
   const next = { ...slots };
   const plansByCode = planCatalog?.plansByCode || {};
   const planType = String(next.plan_type || "")
@@ -145,14 +130,9 @@ export const applyAgreementDefaults = ({
   if (
     !next.delivery_channel &&
     Array.isArray(allowedDeliveryChannels) &&
-    allowedDeliveryChannels.length > 0
+    allowedDeliveryChannels.length === 1
   ) {
-    const preferredDeliveryChannel = resolvePreferredDeliveryChannel(
-      allowedDeliveryChannels,
-    );
-    if (preferredDeliveryChannel) {
-      next.delivery_channel = preferredDeliveryChannel;
-    }
+    [next.delivery_channel] = allowedDeliveryChannels;
   }
 
   return next;

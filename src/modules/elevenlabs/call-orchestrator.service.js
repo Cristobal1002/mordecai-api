@@ -125,13 +125,17 @@ const createCallFsmEvent = async ({ automationId, debtCaseId, payload }) => {
 };
 
 const resolveStateFromInteraction = (interaction, requestedState) => {
-  const requested = normalizeCallState(requestedState);
-  if (requested) return requested;
-  const current =
+  const persisted =
     interaction?.aiData?.eleven?.call_state?.state ||
     interaction?.aiData?.call_state?.state ||
     null;
-  return normalizeCallState(current) || CALL_STATES.VERIFY_IDENTITY;
+  const persistedState = normalizeCallState(persisted);
+  const requested = normalizeCallState(requestedState);
+
+  // Persisted interaction state is source of truth.
+  if (persistedState) return persistedState;
+  if (requested) return requested;
+  return CALL_STATES.VERIFY_IDENTITY;
 };
 
 const resolveDeliveryChannelsForDebtor = (debtor) => {
