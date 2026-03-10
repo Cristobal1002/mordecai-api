@@ -1,25 +1,29 @@
-import { logger } from '../../utils/logger.js';
-import { saveElevenPostCallPayload } from '../twilio/twilio.storage.js';
-import { normalizeElevenPostCallPayload } from './eleven.mapper.js';
+import { logger } from "../../utils/logger.js";
+import { saveElevenPostCallPayload } from "../twilio/twilio.storage.js";
+import { normalizeElevenPostCallPayload } from "./eleven.mapper.js";
 import {
   createPaymentAgreementFromTool,
   createDisputeFromTool,
   getCallStateSnapshot,
   syncInteractionFromPostCall,
-} from './eleven.service.js';
-import { orchestrateCallStepFromTool } from './call-orchestrator.service.js';
-import { verifyElevenLabsWebhook } from './eleven.webhook.js';
+} from "./eleven.service.js";
+import { orchestrateCallStepFromTool } from "./call-orchestrator.service.js";
+import { verifyElevenLabsWebhook } from "./eleven.webhook.js";
 
 const getWebhookSignatureHeader = (req) =>
-  req.get('ElevenLabs-Signature') || req.get('elevenlabs-signature') || '';
+  req.get("ElevenLabs-Signature") || req.get("elevenlabs-signature") || "";
 
-const getRawBody = (req) => req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+const getRawBody = (req) =>
+  req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
 
 const parseToolPayload = (body) => {
-  if (!body || typeof body !== 'object') return {};
+  if (!body || typeof body !== "object") return {};
 
   const conversationId =
-    body.conversation_id || body.conversationId || body?.data?.conversation_id || null;
+    body.conversation_id ||
+    body.conversationId ||
+    body?.data?.conversation_id ||
+    null;
 
   const candidate =
     body.arguments ||
@@ -48,10 +52,14 @@ const parseToolPayload = (body) => {
 const parseOrchestratorPayload = (body) => {
   const parsed = parseToolPayload(body);
   const candidate = parsed.proposal || {};
-  const payloadEntities =
-    candidate.entities && typeof candidate.entities === 'object'
+  const payloadEntities = {
+    ...(candidate.entities && typeof candidate.entities === "object"
       ? candidate.entities
-      : {};
+      : {}),
+    ...(candidate.slots && typeof candidate.slots === "object"
+      ? candidate.slots
+      : {}),
+  };
 
   return {
     conversationId: parsed.conversationId,
@@ -72,7 +80,7 @@ const parseOrchestratorPayload = (body) => {
       body?.user_utterance ||
       body?.userUtterance ||
       body?.message ||
-      '',
+      "",
     intentHint:
       candidate.intent ||
       candidate.intent_hint ||
@@ -85,7 +93,8 @@ const parseOrchestratorPayload = (body) => {
 
 const verifyToolSecret = (req) => {
   const expectedToolSecret = process.env.ELEVENLABS_TOOL_SECRET;
-  const providedToolSecret = req.get('x-eleven-tool-secret') || req.get('x-tool-secret');
+  const providedToolSecret =
+    req.get("x-eleven-tool-secret") || req.get("x-tool-secret");
   if (expectedToolSecret && expectedToolSecret !== providedToolSecret) {
     return { ok: false, hasSecret: Boolean(providedToolSecret) };
   }
@@ -113,11 +122,11 @@ export const elevenController = {
           reason: verification.reason,
           hasSignatureHeader: Boolean(signatureHeader),
         },
-        'Rejected ElevenLabs post-call webhook'
+        "Rejected ElevenLabs post-call webhook",
       );
       return res.status(401).json({
         success: false,
-        message: 'Invalid ElevenLabs webhook signature',
+        message: "Invalid ElevenLabs webhook signature",
       });
     }
 
@@ -131,20 +140,23 @@ export const elevenController = {
         callDurationSecs: normalizedPayload.callDurationSecs,
         terminationReason: normalizedPayload.terminationReason,
       },
-      'Accepted ElevenLabs post-call webhook'
+      "Accepted ElevenLabs post-call webhook",
     );
 
     let s3Key = null;
     try {
       s3Key = await saveElevenPostCallPayload(normalizedPayload);
     } catch (error) {
-      logger.error({ error }, 'Failed to save ElevenLabs post-call payload to S3');
+      logger.error(
+        { error },
+        "Failed to save ElevenLabs post-call payload to S3",
+      );
     }
 
     try {
       await syncInteractionFromPostCall({ normalizedPayload, s3Key });
     } catch (error) {
-      logger.error({ error }, 'Failed to sync post-call payload to DB');
+      logger.error({ error }, "Failed to sync post-call payload to DB");
     }
 
     return res.status(200).json({
@@ -159,12 +171,12 @@ export const elevenController = {
     if (!toolSecretValidation.ok) {
       logger.warn(
         { hasSecret: toolSecretValidation.hasSecret },
-        'Rejected ElevenLabs create-payment-agreement tool call (invalid secret)'
+        "Rejected ElevenLabs create-payment-agreement tool call (invalid secret)",
       );
       return res.status(401).json({
         ok: false,
-        code: 'INVALID_TOOL_SECRET',
-        message: 'Invalid tool secret.',
+        code: "INVALID_TOOL_SECRET",
+        message: "Invalid tool secret.",
       });
     }
 
@@ -194,13 +206,17 @@ export const elevenController = {
           parsedPayload.proposal?.installmentsCount ||
           null,
       },
-      'Incoming ElevenLabs create-payment-agreement tool call'
+      "Incoming ElevenLabs create-payment-agreement tool call",
     );
-    if (!parsedPayload.tenantId || !parsedPayload.caseId || !parsedPayload.proposal) {
+    if (
+      !parsedPayload.tenantId ||
+      !parsedPayload.caseId ||
+      !parsedPayload.proposal
+    ) {
       return res.status(400).json({
         ok: false,
-        code: 'INVALID_PAYLOAD',
-        message: 'Missing tenant_id, case_id or proposal in tool payload.',
+        code: "INVALID_PAYLOAD",
+        message: "Missing tenant_id, case_id or proposal in tool payload.",
       });
     }
 
@@ -214,7 +230,7 @@ export const elevenController = {
         emailSent: result?.email_sent === true,
         smsSent: result?.sms_sent === true,
       },
-      'Completed ElevenLabs create-payment-agreement tool call'
+      "Completed ElevenLabs create-payment-agreement tool call",
     );
     return res.status(200).json(result);
   },
@@ -224,12 +240,12 @@ export const elevenController = {
     if (!toolSecretValidation.ok) {
       logger.warn(
         { hasSecret: toolSecretValidation.hasSecret },
-        'Rejected ElevenLabs create-dispute tool call (invalid secret)'
+        "Rejected ElevenLabs create-dispute tool call (invalid secret)",
       );
       return res.status(401).json({
         ok: false,
-        code: 'INVALID_TOOL_SECRET',
-        message: 'Invalid tool secret.',
+        code: "INVALID_TOOL_SECRET",
+        message: "Invalid tool secret.",
       });
     }
 
@@ -247,14 +263,18 @@ export const elevenController = {
           parsedPayload.proposal?.dispute_reason ||
           null,
       },
-      'Incoming ElevenLabs create-dispute tool call'
+      "Incoming ElevenLabs create-dispute tool call",
     );
 
-    if (!parsedPayload.tenantId || !parsedPayload.caseId || !parsedPayload.proposal) {
+    if (
+      !parsedPayload.tenantId ||
+      !parsedPayload.caseId ||
+      !parsedPayload.proposal
+    ) {
       return res.status(400).json({
         ok: false,
-        code: 'INVALID_PAYLOAD',
-        message: 'Missing tenant_id, case_id or proposal in tool payload.',
+        code: "INVALID_PAYLOAD",
+        message: "Missing tenant_id, case_id or proposal in tool payload.",
       });
     }
 
@@ -265,7 +285,7 @@ export const elevenController = {
         code: result?.code || null,
         disputeId: result?.dispute_id || null,
       },
-      'Completed ElevenLabs create-dispute tool call'
+      "Completed ElevenLabs create-dispute tool call",
     );
     return res.status(200).json(result);
   },
@@ -275,12 +295,12 @@ export const elevenController = {
     if (!toolSecretValidation.ok) {
       logger.warn(
         { hasSecret: toolSecretValidation.hasSecret },
-        'Rejected ElevenLabs orchestrate-call-step tool call (invalid secret)'
+        "Rejected ElevenLabs orchestrate-call-step tool call (invalid secret)",
       );
       return res.status(401).json({
         ok: false,
-        code: 'INVALID_TOOL_SECRET',
-        message: 'Invalid tool secret.',
+        code: "INVALID_TOOL_SECRET",
+        message: "Invalid tool secret.",
       });
     }
 
@@ -292,16 +312,16 @@ export const elevenController = {
         caseId: payload.caseId,
         interactionId: payload.interactionId,
         currentState: payload.currentState,
-        hasUtterance: Boolean(String(payload.userUtterance || '').trim()),
+        hasUtterance: Boolean(String(payload.userUtterance || "").trim()),
       },
-      'Incoming ElevenLabs orchestrate-call-step tool call'
+      "Incoming ElevenLabs orchestrate-call-step tool call",
     );
 
     if (!payload.tenantId || !payload.caseId) {
       return res.status(400).json({
         ok: false,
-        code: 'INVALID_PAYLOAD',
-        message: 'Missing tenant_id or case_id in tool payload.',
+        code: "INVALID_PAYLOAD",
+        message: "Missing tenant_id or case_id in tool payload.",
       });
     }
 
@@ -314,7 +334,7 @@ export const elevenController = {
         nextState: result?.next_state || null,
         action: result?.action || null,
       },
-      'Completed ElevenLabs orchestrate-call-step tool call'
+      "Completed ElevenLabs orchestrate-call-step tool call",
     );
     return res.status(200).json(result);
   },
@@ -324,12 +344,12 @@ export const elevenController = {
     if (!toolSecretValidation.ok) {
       logger.warn(
         { hasSecret: toolSecretValidation.hasSecret },
-        'Rejected ElevenLabs get-call-state tool call (invalid secret)'
+        "Rejected ElevenLabs get-call-state tool call (invalid secret)",
       );
       return res.status(401).json({
         ok: false,
-        code: 'INVALID_TOOL_SECRET',
-        message: 'Invalid tool secret.',
+        code: "INVALID_TOOL_SECRET",
+        message: "Invalid tool secret.",
       });
     }
 
@@ -341,8 +361,8 @@ export const elevenController = {
     if (!tenantId || !caseId) {
       return res.status(400).json({
         ok: false,
-        code: 'INVALID_PAYLOAD',
-        message: 'Missing tenant_id or case_id query params.',
+        code: "INVALID_PAYLOAD",
+        message: "Missing tenant_id or case_id query params.",
       });
     }
 
@@ -354,4 +374,3 @@ export const elevenController = {
     return res.status(200).json(result);
   },
 };
-
