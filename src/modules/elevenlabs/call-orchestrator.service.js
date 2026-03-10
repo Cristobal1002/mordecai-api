@@ -84,9 +84,19 @@ const PLAN_PATTERNS = [
 ];
 
 const CHANNEL_PATTERNS = [
-  { code: 'both', pattern: /\bboth\b/i },
-  { code: 'email', pattern: /\bemail\b/i },
-  { code: 'sms', pattern: /\bsms\b|\btext\b/i },
+  {
+    code: 'both',
+    pattern:
+      /\bboth\b|\b(email|e-?mail)\b\s*(and|&)\s*\b(sms|text)\b|\b(sms|text)\b\s*(and|&)\s*\b(email|e-?mail)\b|\b(ambos|los dos)\b/i,
+  },
+  {
+    code: 'email',
+    pattern: /\bemail\b|\be-?mail\b|\bmail\b|\bcorreo(?:\s+electronico)?\b/i,
+  },
+  {
+    code: 'sms',
+    pattern: /\bsms\b|\btext(?:\s+message)?\b|\bmensaje(?:s)?\s+de\s+texto\b/i,
+  },
 ];
 
 const getRulesFromResolvedPolicy = (resolvedPolicy) => {
