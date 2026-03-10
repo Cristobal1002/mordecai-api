@@ -44,6 +44,11 @@ export const sendSesEmail = async ({ to, subject, html, text, tags = [] }) => {
     throw new Error('Email recipient is required');
   }
 
+  const htmlBody = String(html || '').trim();
+  if (!htmlBody) {
+    throw new Error('Email HTML body is required');
+  }
+
   const emailTags = normalizeTags(tags);
   const command = new SendEmailCommand({
     FromEmailAddress: fromEmail,
@@ -65,9 +70,9 @@ export const sendSesEmail = async ({ to, subject, html, text, tags = [] }) => {
                 Charset: 'UTF-8',
               }
             : undefined,
-          Html: html
+          Html: htmlBody
             ? {
-                Data: String(html),
+                Data: htmlBody,
                 Charset: 'UTF-8',
               }
             : undefined,

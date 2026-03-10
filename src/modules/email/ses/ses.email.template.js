@@ -108,6 +108,18 @@ const plainTextToHtml = (value) => {
     .join('\n');
 };
 
+const unwrapDocumentHtml = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const unwrapped = raw
+    .replace(/<!doctype[^>]*>/gi, '')
+    .replace(/<\/?(html|head|body)[^>]*>/gi, '')
+    .trim();
+
+  return unwrapped || null;
+};
+
 const looksLikeHtmlTemplate = (value) => {
   const normalized = String(value || '').trim();
   if (!normalized) return false;
@@ -229,19 +241,21 @@ export const renderCollectionEmail = ({
     null;
 
   const hasTenantTemplate = Boolean(normalizedTemplateText || normalizedTemplateHtml);
+  const renderedTemplateHtml = unwrapDocumentHtml(renderStringHtml(htmlTemplate, variables));
   const renderedTemplateText = renderStringText(normalizedTemplateText, variables, {
     multiline: true,
   });
+  const customEmailBodyHtml = renderedTemplateHtml || (renderedTemplateText ? plainTextToHtml(renderedTemplateText) : '');
 
   const subject = renderStringText(subjectTemplate, variables)
     || (hasTenantTemplate ? `Payment reminder from ${variables.tenant_name || 'your collections team'}` : null)
     || renderFileText(`collections/${templateName}.subject.njk`, variables);
 
-  const html = renderStringHtml(htmlTemplate, variables)
-    || renderFileHtml(`collections/${templateName}.html.njk`, {
-      ...variables,
-      custom_email_body_html: renderedTemplateText ? plainTextToHtml(renderedTemplateText) : '',
-    });
+  // Always render through the branded layout template.
+  const html = renderFileHtml(`collections/${templateName}.html.njk`, {
+    ...variables,
+    custom_email_body_html: customEmailBodyHtml,
+  });
 
   const text = renderStringText(textTemplate, variables, { multiline: true })
     || (hasTenantTemplate ? renderedTemplateText : null)
