@@ -86,6 +86,11 @@ export class PaymentAgreement extends Model {
           type: DataTypes.JSONB,
           defaultValue: {},
         },
+        paymentProofUrls: {
+          type: DataTypes.JSONB,
+          defaultValue: [],
+          field: 'payment_proof_urls',
+        },
         createdBy: {
           type: DataTypes.ENUM('AI', 'USER', 'SYSTEM'),
           defaultValue: 'AI',

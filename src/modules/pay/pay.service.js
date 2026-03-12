@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Op } from 'sequelize';
 import {
   PaymentLink,
   TenantBranding,
@@ -9,9 +10,20 @@ import {
   PmsLease,
   PmsUnit,
   CollectionEvent,
+  ArCharge,
+  ArPayment,
+  CaseDispute,
 } from '../../models/index.js';
 import { resolveBranding } from '../../config/branding-defaults.js';
-import { resolveLogoUrl } from '../../utils/s3-upload.js';
+import {
+  resolveLogoUrl,
+  generatePresignedUploadUrl,
+  resolveEvidenceOrProofUrl,
+  resolveEvidenceUrls,
+  isOurS3Key,
+  uploadDisputeEvidence as s3UploadDisputeEvidence,
+  uploadAgreementProof as s3UploadAgreementProof,
+} from '../../utils/s3-upload.js';
 import { maskEmail } from '../../utils/mask-email.js';
 import { signPaySession, verifyPaySession } from './pay-jwt.js';
 import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
@@ -225,7 +237,7 @@ export const payService = {
         {
           model: DebtCase,
           as: 'debtCase',
-          attributes: ['id', 'casePublicId', 'amountDueCents', 'currency', 'daysPastDue', 'dueDate', 'meta'],
+          attributes: ['id', 'casePublicId', 'amountDueCents', 'currency', 'daysPastDue', 'dueDate', 'status', 'meta', 'pmsLeaseId'],
           include: [
             { model: Debtor, as: 'debtor', attributes: ['id', 'fullName', 'email', 'phone'] },
           ],
@@ -234,7 +246,7 @@ export const payService = {
           model: PaymentAgreement,
           as: 'paymentAgreement',
           required: false,
-          attributes: ['id', 'totalAmountCents', 'downPaymentCents', 'installments', 'status', 'type'],
+          attributes: ['id', 'totalAmountCents', 'downPaymentCents', 'installments', 'status', 'type', 'terms'],
         },
       ],
     });
@@ -248,38 +260,223 @@ export const payService = {
 
     const dc = link.debtCase;
     const debtor = dc?.debtor;
-    const agreement = link.paymentAgreement;
+    const tenantId = link.tenantId;
+    const pmsLeaseId = dc?.pmsLeaseId ?? dc?.meta?.pms_lease_id ?? dc?.meta?.pmsLeaseId ?? null;
 
-    const paymentInstructions = await buildPaymentInstructions({
-      tenantId: link.tenantId,
-      debtCaseId: dc?.id,
-      casePublicId: dc?.casePublicId ?? null,
-      debtorId: debtor?.id,
-      pmsLeaseId: dc?.meta?.pms_lease_id ?? dc?.meta?.pmsLeaseId ?? null,
-    });
+    const [paymentInstructions, chargesRaw, paymentsRaw, openDisputeRaw, brandingRes] = await Promise.all([
+      buildPaymentInstructions({
+        tenantId,
+        debtCaseId: dc?.id,
+        casePublicId: dc?.casePublicId ?? null,
+        debtorId: debtor?.id,
+        pmsLeaseId,
+      }),
+      pmsLeaseId && tenantId
+        ? ArCharge.findAll({
+            where: { pmsLeaseId, tenantId },
+            attributes: ['id', 'chargeType', 'description', 'amountCents', 'openAmountCents', 'dueDate'],
+            order: [['dueDate', 'DESC']],
+            limit: 20,
+            raw: true,
+          })
+        : [],
+      pmsLeaseId && tenantId
+        ? ArPayment.findAll({
+            where: { pmsLeaseId, tenantId },
+            attributes: ['id', 'amountCents', 'paidAt', 'paymentMethod', 'externalId'],
+            order: [['paidAt', 'DESC']],
+            limit: 10,
+            raw: true,
+          })
+        : [],
+      dc?.id
+        ? CaseDispute.findOne({
+            where: { debtCaseId: dc.id, status: 'OPEN' },
+            attributes: ['id', 'reason', 'notes', 'openedAt', 'evidenceUrls'],
+            raw: true,
+          })
+        : null,
+      TenantBranding.findOne({ where: { tenantId } }),
+    ]);
+
+    const unitNumber = dc?.meta?.unit_number ?? dc?.meta?.unitNumber ?? debtor?.metadata?.unit ?? null;
+    const propertyName = dc?.meta?.property_name ?? dc?.meta?.propertyName ?? null;
+
+    const rent = [];
+    const fees = [];
+    for (const c of Array.isArray(chargesRaw) ? chargesRaw : []) {
+      const charge = {
+        id: c.id,
+        chargeType: c.chargeType,
+        description: c.description,
+        amountCents: Number(c.amountCents ?? 0),
+        openAmountCents: c.openAmountCents != null ? Number(c.openAmountCents) : null,
+        dueDate: c.dueDate,
+        status: c.openAmountCents === 0 ? 'Paid' : 'Unpaid',
+      };
+      const ct = String(c.chargeType ?? '').toLowerCase();
+      if (ct.includes('rent')) {
+        rent.push(charge);
+      } else {
+        fees.push(charge);
+      }
+    }
+
+    const payments = (Array.isArray(paymentsRaw) ? paymentsRaw : []).map((p) => ({
+      id: p.id,
+      amountCents: Number(p.amountCents ?? 0),
+      paymentDate: p.paidAt,
+      type: p.paymentMethod ?? 'Payment',
+      referenceNumber: p.externalId ?? null,
+    }));
+
+    const isCurrentOnPayments =
+      (dc?.amountDueCents === 0) || (dc?.status === 'PAID') || (dc?.daysPastDue === 0);
+
+    const agreement = link.paymentAgreement;
+    let agreementPayload = null;
+    if (agreement) {
+      const terms = agreement.terms && typeof agreement.terms === 'object' ? agreement.terms : {};
+      const installmentsArray = Array.isArray(terms.installments) ? terms.installments : [];
+      const proofKeys = Array.isArray(agreement.paymentProofUrls) ? agreement.paymentProofUrls : [];
+      const proofViewUrls = await resolveEvidenceUrls(proofKeys);
+      agreementPayload = {
+        id: agreement.id,
+        totalAmountCents: agreement.totalAmountCents,
+        downPaymentCents: agreement.downPaymentCents,
+        installments: agreement.installments,
+        status: agreement.status,
+        type: agreement.type,
+        installmentsSchedule: installmentsArray.map((i) => ({
+          dueDate: i.dueDate ?? i.due_date,
+          amountCents: i.amountCents ?? i.amount_cents ?? 0,
+          status: i.status ?? 'Pending',
+        })),
+        paymentProofUrls: proofViewUrls,
+      };
+    }
+
+    const tenant = await Tenant.findByPk(tenantId, { attributes: ['id', 'name'] });
+    const resolved = resolveBranding(brandingRes, tenant);
+    const logoUrl = resolved.logoUrl ? await resolveLogoUrl(resolved.logoUrl) : null;
+
+    const evidenceKeys = openDisputeRaw?.evidence_urls ?? openDisputeRaw?.evidenceUrls ?? [];
+    const evidenceViewUrls = Array.isArray(evidenceKeys) && evidenceKeys.length > 0 ? await resolveEvidenceUrls(evidenceKeys) : [];
 
     const payload = {
-      residentName: debtor?.fullName ?? null,
-      amountDueCents: dc?.amountDueCents ?? 0,
-      currency: dc?.currency ?? 'USD',
-      daysPastDue: dc?.daysPastDue ?? 0,
-      dueDate: dc?.dueDate ?? null,
-      unitNumber: dc?.meta?.unit_number ?? dc?.meta?.unitNumber ?? debtor?.metadata?.unit ?? null,
-      propertyName: dc?.meta?.property_name ?? dc?.meta?.propertyName ?? null,
-      agreement: agreement
+      debtor: {
+        name: debtor?.fullName ?? null,
+        unit: unitNumber,
+        property: propertyName,
+      },
+      case: {
+        id: dc?.id,
+        amountDueCents: dc?.amountDueCents ?? 0,
+        daysPastDue: dc?.daysPastDue ?? 0,
+        dueDate: dc?.dueDate ?? null,
+        status: dc?.status ?? null,
+        isCurrentOnPayments,
+      },
+      branding: {
+        companyName: resolved.companyName,
+        logoUrl,
+        primaryColor: resolved.primaryColor,
+        secondaryColor: resolved.secondaryColor,
+        supportEmail: resolved.supportEmail,
+        supportPhone: resolved.supportPhone,
+        supportHours: resolved.supportHours,
+        footerText: resolved.footerText,
+        showPoweredBy: resolved.showPoweredBy,
+      },
+      charges: { rent, fees },
+      payments,
+      agreement: agreementPayload,
+      openDispute: openDisputeRaw
         ? {
-            id: agreement.id,
-            totalAmountCents: agreement.totalAmountCents,
-            downPaymentCents: agreement.downPaymentCents,
-            installments: agreement.installments,
-            status: agreement.status,
-            type: agreement.type,
+            id: openDisputeRaw.id,
+            reason: openDisputeRaw.reason,
+            notes: openDisputeRaw.notes,
+            openedAt: openDisputeRaw.openedAt,
+            evidenceUrls: evidenceViewUrls,
           }
         : null,
-      paymentInstructions,
+      paymentChannels: paymentInstructions,
     };
 
     return { status: 200, payload };
+  },
+
+  /**
+   * POST /pay/:token/dispute — Requires paySessionToken. Create dispute from portal.
+   */
+  createDispute: async (token, authHeader, body) => {
+    const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
+
+    const link = await resolvePaymentLink(token, {
+      include: [{ model: DebtCase, as: 'debtCase', attributes: ['id', 'tenantId'] }],
+    });
+
+    if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
+    if (link.status !== 'VERIFIED' && link.status !== 'PENDING') {
+      if (link.status === 'PAID') return { status: 410 };
+      if (link.status === 'EXPIRED' || link.status === 'BLOCKED') return { status: 410 };
+    }
+
+    const { reason, notes, evidenceKeys } = body || {};
+    const validReasons = [
+      'PAID_ALREADY',
+      'WRONG_AMOUNT',
+      'WRONG_DEBTOR',
+      'LEASE_ENDED',
+      'UNDER_LEGAL_REVIEW',
+      'PROMISE_OFFLINE',
+      'DO_NOT_CONTACT',
+      'OTHER',
+    ];
+    if (!reason || !validReasons.includes(reason)) {
+      return { status: 400, message: 'Invalid or missing reason' };
+    }
+
+    const debtCaseId = link.debtCaseId;
+    const tenantId = link.tenantId;
+
+    const existing = await CaseDispute.findOne({
+      where: { debtCaseId, status: 'OPEN' },
+    });
+    if (existing) {
+      return { status: 409, message: 'An open dispute already exists for this case' };
+    }
+
+    const notesTrimmed = typeof notes === 'string' ? notes.slice(0, 500).trim() || null : null;
+    const evidenceArr = Array.isArray(evidenceKeys)
+      ? evidenceKeys
+          .filter((k) => typeof k === 'string' && isOurS3Key(k) && k.startsWith(`disputes/${tenantId}/${debtCaseId}/`))
+          .slice(0, 10)
+      : [];
+    const dispute = await CaseDispute.create({
+      tenantId,
+      debtCaseId,
+      reason,
+      notes: notesTrimmed,
+      evidenceUrls: evidenceArr,
+      openedBy: null,
+      openedAt: new Date(),
+      status: 'OPEN',
+    });
+
+    return {
+      status: 200,
+      payload: {
+        success: true,
+        dispute: {
+          id: dispute.id,
+          reason: dispute.reason,
+          openedAt: dispute.openedAt,
+        },
+      },
+    };
   },
 
   /**
@@ -428,5 +625,197 @@ export const payService = {
       status: 200,
       payload: { verified: true, token: urlToken, paySessionToken },
     };
+  },
+
+  /**
+   * POST /pay/:token/dispute/evidence/presign — Get presigned upload URL for dispute evidence.
+   */
+  presignDisputeEvidence: async (token, authHeader, body) => {
+    const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
+
+    const link = await resolvePaymentLink(token, {
+      include: [{ model: DebtCase, as: 'debtCase', attributes: ['id', 'tenantId'] }],
+    });
+    if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
+    if (link.status !== 'VERIFIED' && link.status !== 'PENDING') return { status: 410 };
+
+    const { filename, contentType } = body || {};
+    if (!filename || !contentType) return { status: 400, message: 'filename and contentType required' };
+
+    const { uploadUrl, s3Key, expiresIn } = await generatePresignedUploadUrl({
+      tenantId: link.tenantId,
+      debtCaseId: link.debtCaseId,
+      filename,
+      contentType,
+    });
+    return { status: 200, payload: { uploadUrl, s3Key, expiresIn } };
+  },
+
+  /**
+   * POST /pay/:token/dispute/evidence — Add evidence (s3Keys) to existing open dispute.
+   */
+  addDisputeEvidence: async (token, authHeader, body) => {
+    const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
+
+    const link = await resolvePaymentLink(token, {
+      include: [{ model: DebtCase, as: 'debtCase', attributes: ['id', 'tenantId'] }],
+    });
+    if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
+    if (link.status !== 'VERIFIED' && link.status !== 'PENDING') return { status: 410 };
+
+    const dispute = await CaseDispute.findOne({
+      where: { debtCaseId: link.debtCaseId, status: 'OPEN' },
+    });
+    if (!dispute) return { status: 404, message: 'No open dispute found for this case' };
+
+    const { evidenceKeys } = body || {};
+    const keys = Array.isArray(evidenceKeys)
+      ? evidenceKeys
+          .filter((k) => typeof k === 'string' && isOurS3Key(k) && k.startsWith(`disputes/${link.tenantId}/${link.debtCaseId}/`))
+          .slice(0, 10)
+      : [];
+    const existing = Array.isArray(dispute.evidenceUrls) ? dispute.evidenceUrls : [];
+    const merged = [...existing, ...keys].slice(0, 20);
+    await dispute.update({ evidenceUrls: merged });
+
+    return { status: 200, payload: { success: true, evidenceCount: merged.length } };
+  },
+
+  /**
+   * POST /pay/:token/agreement/proof/presign — Get presigned upload URL for agreement payment proof.
+   */
+  presignAgreementProof: async (token, authHeader, body) => {
+    const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
+
+    const link = await resolvePaymentLink(token, {
+      include: [
+        { model: DebtCase, as: 'debtCase', attributes: ['id'] },
+        { model: PaymentAgreement, as: 'paymentAgreement', required: false, attributes: ['id'] },
+      ],
+    });
+    if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
+    if (link.status !== 'VERIFIED' && link.status !== 'PENDING') return { status: 410 };
+    const agreement = link.paymentAgreement;
+    if (!agreement) return { status: 404, message: 'No agreement linked to this payment link' };
+
+    const { filename, contentType } = body || {};
+    if (!filename || !contentType) return { status: 400, message: 'filename and contentType required' };
+
+    const { uploadUrl, s3Key, expiresIn } = await generatePresignedUploadUrl({
+      tenantId: link.tenantId,
+      debtCaseId: link.debtCaseId,
+      agreementId: agreement.id,
+      filename,
+      contentType,
+    });
+    return { status: 200, payload: { uploadUrl, s3Key, expiresIn } };
+  },
+
+  /**
+   * POST /pay/:token/agreement/proof — Add payment proof (s3Keys) to agreement.
+   */
+  addAgreementProof: async (token, authHeader, body) => {
+    const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
+
+    const link = await resolvePaymentLink(token, {
+      include: [{ model: PaymentAgreement, as: 'paymentAgreement', required: false, attributes: ['id'] }],
+    });
+    if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
+    if (link.status !== 'VERIFIED' && link.status !== 'PENDING') return { status: 410 };
+    const agreement = link.paymentAgreement;
+    if (!agreement) return { status: 404, message: 'No agreement linked to this payment link' };
+
+    const { proofKeys } = body || {};
+    const keys = Array.isArray(proofKeys)
+      ? proofKeys
+          .filter((k) => typeof k === 'string' && isOurS3Key(k) && k.startsWith(`agreements/${link.tenantId}/${agreement.id}/`))
+          .slice(0, 10)
+      : [];
+    const existing = Array.isArray(agreement.paymentProofUrls) ? agreement.paymentProofUrls : [];
+    const merged = [...existing, ...keys].slice(0, 20);
+    await agreement.update({ paymentProofUrls: merged });
+
+    return { status: 200, payload: { success: true, proofCount: merged.length } };
+  },
+
+  /**
+   * POST /pay/:token/dispute/evidence/upload — Upload dispute evidence file (multipart). Server uploads to S3 and adds key to dispute.
+   */
+  uploadDisputeEvidence: async (token, authHeader, file) => {
+    const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
+
+    const link = await resolvePaymentLink(token, {
+      include: [{ model: DebtCase, as: 'debtCase', attributes: ['id', 'tenantId'] }],
+    });
+    if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
+    if (link.status !== 'VERIFIED' && link.status !== 'PENDING') return { status: 410 };
+
+    const dispute = await CaseDispute.findOne({
+      where: { debtCaseId: link.debtCaseId, status: 'OPEN' },
+    });
+    if (!dispute) return { status: 404, message: 'No open dispute found for this case' };
+
+    if (!file?.path) return { status: 400, message: 'No file provided' };
+
+    try {
+      const s3Key = await s3UploadDisputeEvidence(
+        link.tenantId,
+        link.debtCaseId,
+        file.path,
+        file.originalname || 'file',
+        file.mimetype || 'application/octet-stream'
+      );
+      const existing = Array.isArray(dispute.evidenceUrls) ? dispute.evidenceUrls : [];
+      const merged = [...existing, s3Key].slice(0, 20);
+      await dispute.update({ evidenceUrls: merged });
+      return { status: 200, payload: { success: true, s3Key, evidenceCount: merged.length } };
+    } catch (err) {
+      return { status: 400, message: err.message || 'Upload failed' };
+    }
+  },
+
+  /**
+   * POST /pay/:token/agreement/proof/upload — Upload agreement payment proof file (multipart). Server uploads to S3 and adds key to agreement.
+   */
+  uploadAgreementProof: async (token, authHeader, file) => {
+    const decoded = verifyPaySession(authHeader?.replace(/^Bearer\s+/i, '')?.trim());
+    if (!decoded) return { status: 401, message: 'Invalid or expired session' };
+
+    const link = await resolvePaymentLink(token, {
+      include: [{ model: PaymentAgreement, as: 'paymentAgreement', required: false, attributes: ['id'] }],
+    });
+    if (!link) return { status: 404 };
+    if (decoded.payToken !== link.token) return { status: 401, message: 'Invalid or expired session' };
+    if (link.status !== 'VERIFIED' && link.status !== 'PENDING') return { status: 410 };
+    const agreement = link.paymentAgreement;
+    if (!agreement) return { status: 404, message: 'No agreement linked to this payment link' };
+
+    if (!file?.path) return { status: 400, message: 'No file provided' };
+
+    try {
+      const s3Key = await s3UploadAgreementProof(
+        link.tenantId,
+        agreement.id,
+        file.path,
+        file.originalname || 'file',
+        file.mimetype || 'application/octet-stream'
+      );
+      const existing = Array.isArray(agreement.paymentProofUrls) ? agreement.paymentProofUrls : [];
+      const merged = [...existing, s3Key].slice(0, 20);
+      await agreement.update({ paymentProofUrls: merged });
+      return { status: 200, payload: { success: true, s3Key, proofCount: merged.length } };
+    } catch (err) {
+      return { status: 400, message: err.message || 'Upload failed' };
+    }
   },
 };
