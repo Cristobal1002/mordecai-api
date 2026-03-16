@@ -1,12 +1,15 @@
 import { CollectionEvent, InteractionLog } from '../../../models/index.js';
 import { logger } from '../../../utils/logger.js';
 import {
+  buildConciseLinkSmsBody,
   buildCollectionSmsBody,
   estimateSmsTransportMeta,
 } from './twilio.sms.template.js';
 import { sendTwilioSms } from './twilio.sms.client.js';
 import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
 import { resolveChannelTemplate } from '../../templates/template-resolution.service.js';
+
+const TEMP_DISABLE_COLLECTION_SMS_LINK = true; // TODO remove this to enable link
 
 const createCollectionEvent = async ({
   automationId,
@@ -75,15 +78,16 @@ export const sendCollectionSms = async ({
     };
   }
 
-  // SMS uses a clean short link to minimize carrier filtering risk.
-  const paymentLink = await getOrCreatePaymentLinkUrl({
-    tenantId,
-    debtCaseId,
-    paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
-    source: 'sms',
-    automationId,
-    includeAttribution: false,
-  });
+  const paymentLink = TEMP_DISABLE_COLLECTION_SMS_LINK
+    ? ''
+    : await getOrCreatePaymentLinkUrl({
+        tenantId,
+        debtCaseId,
+        paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
+        source: 'sms',
+        automationId,
+        includeAttribution: false,
+      });
 
   const smsTemplate = await resolveChannelTemplate({
     tenantId,
@@ -116,12 +120,19 @@ export const sendCollectionSms = async ({
     };
   }
 
-  const body = buildCollectionSmsBody({
-    debtorName: debtor?.fullName,
-    customTemplate,
-    paymentLink,
-    tenantName: tenant?.name || '',
-  });
+  const body = TEMP_DISABLE_COLLECTION_SMS_LINK
+    ? buildConciseLinkSmsBody({
+        debtorName: debtor?.fullName,
+        tenantName: tenant?.name || '',
+        paymentLink: '',
+        fallbackText: 'Reply to continue. STOP=opt out.',
+      })
+    : buildCollectionSmsBody({
+        debtorName: debtor?.fullName,
+        customTemplate,
+        paymentLink,
+        tenantName: tenant?.name || '',
+      });
   const smsMeta = estimateSmsTransportMeta(body);
 
   let interaction = null;
@@ -146,6 +157,7 @@ export const sendCollectionSms = async ({
       status: 'queued',
       aiData: {
         delivery_profile: 'concise_link',
+        payment_link_enabled: !TEMP_DISABLE_COLLECTION_SMS_LINK,
         payment_link_attribution: 'disabled_for_sms',
         template_reason: smsTemplate.reason || null,
         estimated_encoding: smsMeta.encoding,
