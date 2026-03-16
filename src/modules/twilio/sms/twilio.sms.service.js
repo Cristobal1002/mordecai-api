@@ -3,23 +3,10 @@ import { logger } from '../../../utils/logger.js';
 import {
   buildCollectionSmsBody,
   estimateSmsTransportMeta,
-  isColombiaDestinationPhone,
 } from './twilio.sms.template.js';
 import { sendTwilioSms } from './twilio.sms.client.js';
 import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
 import { resolveChannelTemplate } from '../../templates/template-resolution.service.js';
-
-const parseBooleanFlag = (value, defaultValue = false) => {
-  if (value === undefined || value === null || value === '') return defaultValue;
-  if (typeof value === 'boolean') return value;
-  const normalized = String(value).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
-  return defaultValue;
-};
-
-const SMS_CO_STRICT_MODE = parseBooleanFlag(process.env.SMS_CO_STRICT_MODE, false);
-const SMS_CO_DISABLE_LINK = parseBooleanFlag(process.env.SMS_CO_DISABLE_LINK, false);
 
 const createCollectionEvent = async ({
   automationId,
@@ -69,9 +56,6 @@ export const sendCollectionSms = async ({
   const debtCaseId = debtCase?.id || state?.debtCaseId;
   const debtorId = debtor?.id || debtCase?.debtorId || null;
   const to = debtor?.phone;
-  const isColombiaDestination = isColombiaDestinationPhone(to);
-  const strictColombiaMode = SMS_CO_STRICT_MODE && isColombiaDestination;
-  const includePaymentLink = !(strictColombiaMode && SMS_CO_DISABLE_LINK);
 
   if (!to) {
     await createCollectionEvent({
@@ -91,13 +75,14 @@ export const sendCollectionSms = async ({
     };
   }
 
-  // Always ensure a payment link (with ?source=sms&aid= for click attribution)
+  // SMS uses a clean short link to minimize carrier filtering risk.
   const paymentLink = await getOrCreatePaymentLinkUrl({
     tenantId,
     debtCaseId,
     paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
     source: 'sms',
     automationId,
+    includeAttribution: false,
   });
 
   const smsTemplate = await resolveChannelTemplate({
@@ -133,18 +118,9 @@ export const sendCollectionSms = async ({
 
   const body = buildCollectionSmsBody({
     debtorName: debtor?.fullName,
-    amountDueCents: debtCase?.amountDueCents,
-    currency: debtCase?.currency,
-    daysPastDue: debtCase?.daysPastDue,
-    stageName: stage?.name,
     customTemplate,
-    meta: debtCase?.meta || {},
-    dueDate: debtCase?.dueDate || '',
     paymentLink,
     tenantName: tenant?.name || '',
-    destinationPhone: to,
-    strictColombiaMode,
-    includePaymentLink,
   });
   const smsMeta = estimateSmsTransportMeta(body);
 
@@ -156,9 +132,6 @@ export const sendCollectionSms = async ({
         tenantId,
         debtCaseId,
         automationId: automationId || null,
-        destinationCountry: isColombiaDestination ? 'CO' : 'OTHER',
-        strictColombiaMode,
-        includePaymentLink,
         smsEncoding: smsMeta.encoding,
         smsSegments: smsMeta.segments,
         smsLength: smsMeta.length,
@@ -172,9 +145,9 @@ export const sendCollectionSms = async ({
       debtorId,
       status: 'queued',
       aiData: {
-        destination_country: isColombiaDestination ? 'CO' : 'OTHER',
-        strict_colombia_mode: strictColombiaMode,
-        include_payment_link: includePaymentLink,
+        delivery_profile: 'concise_link',
+        payment_link_attribution: 'disabled_for_sms',
+        template_reason: smsTemplate.reason || null,
         estimated_encoding: smsMeta.encoding,
         estimated_segments: smsMeta.segments,
         estimated_units: smsMeta.units,
@@ -224,9 +197,6 @@ export const sendCollectionSms = async ({
         tenantId,
         debtCaseId,
         automationId,
-        destinationCountry: isColombiaDestination ? 'CO' : 'OTHER',
-        strictColombiaMode,
-        includePaymentLink,
         smsEncoding: smsMeta.encoding,
         smsSegments: smsMeta.segments,
       },

@@ -4,10 +4,9 @@
  *
  * URLs use short_token (8 chars) when available to save SMS characters, e.g. /p/abc12XyZ
  *
- * For channel attribution (SMS vs Email link clicks), pass source and automationId:
- * - SMS: getOrCreatePaymentLinkUrl({ ..., source: 'sms', automationId })
- * - Email: getOrCreatePaymentLinkUrl({ ..., source: 'email', automationId })
- * The URL will include ?source=sms|email&aid=automationId so pay.mordecai.ai can attribute clicks.
+ * For channel attribution (SMS vs Email link clicks), pass source and automationId.
+ * By default the URL includes ?source=sms|email&aid=automationId so pay.mordecai.ai can
+ * attribute clicks. Callers may disable attribution for SMS deliverability-sensitive flows.
  */
 import crypto from 'crypto';
 import { Op } from 'sequelize';
@@ -74,9 +73,17 @@ export function appendPaymentLinkAttribution(baseUrl, source, automationId) {
  * @param {string} [opts.paymentAgreementId] - Optional, if there's an agreement
  * @param {string} [opts.source] - 'sms' | 'email' for click attribution
  * @param {string} [opts.automationId] - Automation UUID for Activity attribution
+ * @param {boolean} [opts.includeAttribution=true] - Append source/aid params to the URL
  * @returns {Promise<string>} Full URL e.g. https://pay.mordecai.ai/p/{token}
  */
-export async function getOrCreatePaymentLinkUrl({ tenantId, debtCaseId, paymentAgreementId = null, source, automationId } = {}) {
+export async function getOrCreatePaymentLinkUrl({
+  tenantId,
+  debtCaseId,
+  paymentAgreementId = null,
+  source,
+  automationId,
+  includeAttribution = true,
+} = {}) {
   const minExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // at least 24h left
 
   const existing = await PaymentLink.findOne({
@@ -114,5 +121,7 @@ export async function getOrCreatePaymentLinkUrl({ tenantId, debtCaseId, paymentA
   }
 
   const baseUrl = `${PAYMENTS_BASE_URL}/p/${urlToken}`;
-  return appendPaymentLinkAttribution(baseUrl, source, automationId);
+  return includeAttribution
+    ? appendPaymentLinkAttribution(baseUrl, source, automationId)
+    : baseUrl;
 }

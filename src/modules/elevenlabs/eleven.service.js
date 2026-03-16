@@ -20,7 +20,7 @@ import {
 import { sendSesEmail } from "../email/ses/ses.email.client.js";
 import { renderElevenLinkEmail } from "../email/ses/ses.email.template.js";
 import { sendTwilioSms } from "../twilio/sms/twilio.sms.client.js";
-import { isColombiaDestinationPhone } from "../twilio/sms/twilio.sms.template.js";
+import { buildConciseLinkSmsBody } from "../twilio/sms/twilio.sms.template.js";
 import { logger } from "../../utils/logger.js";
 import { registerTwilioCallInElevenLabs } from "./eleven.client.js";
 import {
@@ -532,8 +532,6 @@ const parseBoolean = (value, defaultValue = false) => {
   if (["0", "false", "no", "n"].includes(normalized)) return false;
   return defaultValue;
 };
-const SMS_CO_STRICT_MODE = parseBoolean(process.env.SMS_CO_STRICT_MODE, false);
-const SMS_CO_DISABLE_LINK = parseBoolean(process.env.SMS_CO_DISABLE_LINK, false);
 
 const normalizeUuid = (value) => {
   const text = String(value || "").trim();
@@ -1083,63 +1081,26 @@ const buildAgreementSmsBody = ({
   debtorName,
   tenantName,
   paymentLinkUrl,
-  strictColombiaMode = false,
-  includePaymentLink = true,
-}) => {
-  if (strictColombiaMode) {
-    const firstName = String(debtorName || "there").trim().split(/\s+/)[0] || "there";
-    const brand = (String(tenantName || "Collections").trim() || "Collections").slice(0, 24);
-    if (includePaymentLink && paymentLinkUrl) {
-      const primary = `${brand}: Hi ${firstName}. Link: ${paymentLinkUrl} STOP=opt out.`;
-      if (primary.length <= 140) return primary;
-      const short = `${brand}: ${paymentLinkUrl} STOP=opt out.`;
-      if (short.length <= 140) return short;
-      if (String(paymentLinkUrl).length <= 140) return String(paymentLinkUrl);
-      return short.slice(0, 137) + "...";
-    }
-    return `${brand}: Hi ${firstName}. Reply to continue. STOP=opt out.`;
-  }
-
-  if (includePaymentLink && paymentLinkUrl) {
-    return (
-      `Hi ${debtorName}, thanks for speaking with ${tenantName}. ` +
-      `Here is your secure case link to complete payment or upload dispute evidence: ${paymentLinkUrl}`
-    );
-  }
-
-  return `Hi ${debtorName}, thanks for speaking with ${tenantName}. Please reply to continue your case.`;
-};
+}) =>
+  buildConciseLinkSmsBody({
+    debtorName,
+    tenantName,
+    paymentLink: paymentLinkUrl,
+    fallbackText: "Reply to continue. STOP=opt out.",
+  });
 
 const buildDisputeSmsBody = ({
   debtorName,
   tenantName,
   paymentLinkUrl,
-  strictColombiaMode = false,
-  includePaymentLink = true,
-}) => {
-  if (strictColombiaMode) {
-    const firstName = String(debtorName || "there").trim().split(/\s+/)[0] || "there";
-    const brand = (String(tenantName || "Collections").trim() || "Collections").slice(0, 24);
-    if (includePaymentLink && paymentLinkUrl) {
-      const primary = `${brand}: Hi ${firstName}. Dispute link: ${paymentLinkUrl} STOP=opt out.`;
-      if (primary.length <= 140) return primary;
-      const short = `${brand}: ${paymentLinkUrl} STOP=opt out.`;
-      if (short.length <= 140) return short;
-      if (String(paymentLinkUrl).length <= 140) return String(paymentLinkUrl);
-      return short.slice(0, 137) + "...";
-    }
-    return `${brand}: Hi ${firstName}. We registered your dispute. Reply for support. STOP=opt out.`;
-  }
-
-  if (includePaymentLink && paymentLinkUrl) {
-    return (
-      `Hi ${debtorName}, we registered your dispute with ${tenantName}. ` +
-      `Use this secure link to upload evidence and track updates: ${paymentLinkUrl}`
-    );
-  }
-
-  return `Hi ${debtorName}, we registered your dispute with ${tenantName}. Reply if you need help.`;
-};
+}) =>
+  buildConciseLinkSmsBody({
+    debtorName,
+    tenantName,
+    paymentLink: paymentLinkUrl,
+    linkLabel: "Dispute link:",
+    fallbackText: "Reply for support. STOP=opt out.",
+  });
 
 const sendCaseLinkSms = async ({
   tenantId,
@@ -1162,8 +1123,6 @@ const sendCaseLinkSms = async ({
     context === "dispute" ? "dispute_link_failed" : "payment_link_failed";
 
   const to = String(debtor?.phone || "").trim();
-  const strictColombiaMode = SMS_CO_STRICT_MODE && isColombiaDestinationPhone(to);
-  const includePaymentLink = !(strictColombiaMode && SMS_CO_DISABLE_LINK);
   if (!to) {
     await createCollectionEvent({
       automationId,
@@ -1182,8 +1141,6 @@ const sendCaseLinkSms = async ({
     debtorName: debtor.fullName || "there",
     tenantName,
     paymentLinkUrl,
-    strictColombiaMode,
-    includePaymentLink,
   });
 
   try {
@@ -1200,9 +1157,8 @@ const sendCaseLinkSms = async ({
         payment_link_url: paymentLinkUrl,
         [entityKey]: entityValue,
         context: `${context}_link_delivery`,
-        strict_colombia_mode: strictColombiaMode,
-        include_payment_link: includePaymentLink,
-        destination_country: isColombiaDestinationPhone(to) ? "CO" : "OTHER",
+        delivery_profile: "concise_link",
+        payment_link_attribution: "disabled_for_sms",
       },
     });
 
@@ -1216,8 +1172,6 @@ const sendCaseLinkSms = async ({
         [entityKey]: entityValue,
         to,
         providerRef: provider.messageSid,
-        strictColombiaMode,
-        includePaymentLink,
       },
     });
 
@@ -1242,9 +1196,8 @@ const sendCaseLinkSms = async ({
         payment_link_url: paymentLinkUrl,
         [entityKey]: entityValue,
         context: `${context}_link_delivery`,
-        strict_colombia_mode: strictColombiaMode,
-        include_payment_link: includePaymentLink,
-        destination_country: isColombiaDestinationPhone(to) ? "CO" : "OTHER",
+        delivery_profile: "concise_link",
+        payment_link_attribution: "disabled_for_sms",
       },
     });
     await createCollectionEvent({
@@ -1255,8 +1208,6 @@ const sendCaseLinkSms = async ({
       payload: {
         [entityKey]: entityValue,
         reason: message,
-        strictColombiaMode,
-        includePaymentLink,
       },
     });
     return { ok: false, channel: "sms", reason: message };
@@ -2024,12 +1975,12 @@ export const createPaymentAgreementFromTool = async ({
   const deliveryResults = [];
 
   for (const channel of deliveryChannels) {
-    const attributedLink = appendPaymentLinkAttribution(
-      paymentLinkUrl,
-      channel,
-      resolvedAutomationId,
-    );
     if (channel === "email") {
+      const attributedLink = appendPaymentLinkAttribution(
+        paymentLinkUrl,
+        channel,
+        resolvedAutomationId,
+      );
       // eslint-disable-next-line no-await-in-loop
       deliveryResults.push(
         await sendCaseLinkEmail({
@@ -2054,7 +2005,7 @@ export const createPaymentAgreementFromTool = async ({
           tenantId,
           debtCaseId: debtCase.id,
           debtor: debtCase.debtor,
-          paymentLinkUrl: attributedLink,
+          paymentLinkUrl,
           tenantName: tenantDisplayName,
           automationId: resolvedAutomationId,
           context: "agreement",
@@ -2334,12 +2285,12 @@ export const createDisputeFromTool = async ({
 
   if (shouldSendLink) {
     for (const channel of deliveryChannels) {
-      const attributedLink = appendPaymentLinkAttribution(
-        paymentLinkUrl,
-        channel,
-        resolvedAutomationId,
-      );
       if (channel === "email") {
+        const attributedLink = appendPaymentLinkAttribution(
+          paymentLinkUrl,
+          channel,
+          resolvedAutomationId,
+        );
         // eslint-disable-next-line no-await-in-loop
         deliveryResults.push(
           await sendCaseLinkEmail({
@@ -2365,7 +2316,7 @@ export const createDisputeFromTool = async ({
             tenantId,
             debtCaseId: debtCase.id,
             debtor: debtCase.debtor,
-            paymentLinkUrl: attributedLink,
+            paymentLinkUrl,
             tenantName: tenantDisplayName,
             automationId: resolvedAutomationId,
             context: "dispute",

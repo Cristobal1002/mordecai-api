@@ -1,33 +1,4 @@
-const DEFAULT_CURRENCY = 'USD';
-const DEFAULT_MAX_SMS_LENGTH = 320;
-const COLOMBIA_STRICT_MAX_SMS_LENGTH = 140;
-
-const normalizePhone = (value) => String(value || '').replace(/[^\d+]/g, '');
-
-export const isColombiaDestinationPhone = (value) => {
-  const normalized = normalizePhone(value);
-  return normalized.startsWith('+57') || normalized.startsWith('57');
-};
-
-const toAmount = (amountDueCents) => {
-  const parsed = Number(amountDueCents);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed / 100;
-};
-
-const formatAmount = (amount, currency = DEFAULT_CURRENCY) => {
-  if (amount == null || !Number.isFinite(amount)) return null;
-  try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency}`;
-  }
-};
+const DEFAULT_MAX_SMS_LENGTH = 140;
 
 const renderTemplate = (template, variables) => {
   if (typeof template !== 'string' || !template.trim()) return null;
@@ -54,31 +25,32 @@ const trimToMaxLength = (text, maxLength = DEFAULT_MAX_SMS_LENGTH) => {
   return `${cleaned.slice(0, maxLength - 3)}...`;
 };
 
-const buildStrictColombiaBody = ({
+const buildConciseLinkSmsBody = ({
   debtorName,
   tenantName,
   paymentLink,
-  includePaymentLink,
+  linkLabel = 'Link:',
+  fallbackText = 'Reply to continue. STOP=opt out.',
 }) => {
   const safeBrand = sanitizeAscii(tenantName || 'Collections').slice(0, 24) || 'Collections';
   const firstName = sanitizeAscii(debtorName || 'there').split(' ')[0] || 'there';
 
-  if (includePaymentLink && paymentLink) {
-    const primary = `${safeBrand}: Hi ${firstName}. Link: ${paymentLink} STOP=opt out.`;
-    if (primary.length <= COLOMBIA_STRICT_MAX_SMS_LENGTH) return primary;
+  if (paymentLink) {
+    const primary = `${safeBrand}: Hi ${firstName}. ${linkLabel} ${paymentLink} STOP=opt out.`;
+    if (primary.length <= DEFAULT_MAX_SMS_LENGTH) return primary;
 
     const shorter = `${safeBrand}: ${paymentLink} STOP=opt out.`;
-    if (shorter.length <= COLOMBIA_STRICT_MAX_SMS_LENGTH) return shorter;
+    if (shorter.length <= DEFAULT_MAX_SMS_LENGTH) return shorter;
 
-    if (String(paymentLink).length <= COLOMBIA_STRICT_MAX_SMS_LENGTH) {
+    if (String(paymentLink).length <= DEFAULT_MAX_SMS_LENGTH) {
       return String(paymentLink);
     }
 
-    return trimToMaxLength(shorter, COLOMBIA_STRICT_MAX_SMS_LENGTH);
+    return trimToMaxLength(shorter, DEFAULT_MAX_SMS_LENGTH);
   }
 
-  const noLink = `${safeBrand}: Hi ${firstName}. Reply to this SMS to continue. STOP=opt out.`;
-  return trimToMaxLength(noLink, COLOMBIA_STRICT_MAX_SMS_LENGTH);
+  const noLink = `${safeBrand}: Hi ${firstName}. ${fallbackText}`;
+  return trimToMaxLength(noLink, DEFAULT_MAX_SMS_LENGTH);
 };
 
 const GSM_7_BASIC_CHARS = new Set(
@@ -137,58 +109,33 @@ export const estimateSmsTransportMeta = (text) => {
 
 export const buildCollectionSmsBody = ({
   debtorName,
-  amountDueCents,
-  currency,
-  daysPastDue,
-  stageName,
   customTemplate,
-  meta = {},
-  dueDate = '',
   paymentLink = '',
   tenantName = '',
-  destinationPhone = '',
-  strictColombiaMode = false,
-  includePaymentLink = true,
 }) => {
-  const amount = toAmount(amountDueCents);
-  const amountFormatted = formatAmount(amount, currency || DEFAULT_CURRENCY);
   const vars = {
     tenant_name: tenantName || '',
     debtor_name: debtorName || 'there',
-    amount_due: amountFormatted || 'your balance',
-    days_past_due:
-      Number.isFinite(Number(daysPastDue)) && Number(daysPastDue) >= 0
-        ? String(daysPastDue)
-        : 'N/A',
-    stage_name: stageName || 'collection stage',
-    due_date: dueDate || '',
     payment_link: paymentLink || '',
-    property_name: meta.property_name || meta.propertyName || '',
-    unit_number: meta.unit_number || meta.unitNumber || '',
-    lease_number: meta.lease_number || meta.leaseNumber || meta.lease_id || '',
   };
-  const isColombiaDestination = isColombiaDestinationPhone(destinationPhone);
-  const useStrictColombiaMode = strictColombiaMode && isColombiaDestination;
-
-  if (useStrictColombiaMode) {
-    return buildStrictColombiaBody({
-      debtorName: vars.debtor_name,
-      tenantName: vars.tenant_name,
-      paymentLink: includePaymentLink ? vars.payment_link : '',
-      includePaymentLink,
-    });
-  }
 
   const renderedCustom = renderTemplate(customTemplate, vars);
   if (renderedCustom) {
-    return trimToMaxLength(renderedCustom);
+    const compactCustom = trimToMaxLength(renderedCustom, DEFAULT_MAX_SMS_LENGTH);
+    const customMeta = estimateSmsTransportMeta(compactCustom);
+    const hasRequiredLink = !vars.payment_link || compactCustom.includes(vars.payment_link);
+
+    if (customMeta.segments <= 1 && hasRequiredLink) {
+      return compactCustom;
+    }
   }
 
-  const linkPart = includePaymentLink && vars.payment_link
-    ? ` View your account and pay here: ${vars.payment_link}`
-    : '';
-  const tenantDisplay = vars.tenant_name || 'your collections team';
-  const fallback = `Hi ${vars.debtor_name}, this is ${tenantDisplay} regarding your account.${linkPart} Reply to discuss payment options.`;
-  return trimToMaxLength(fallback);
+  return buildConciseLinkSmsBody({
+    debtorName: vars.debtor_name,
+    tenantName: vars.tenant_name,
+    paymentLink: vars.payment_link,
+  });
 };
+
+export { buildConciseLinkSmsBody };
 
