@@ -12,27 +12,57 @@ import { errorHandlerMiddleware } from '../middlewares/index.js';
 import { swaggerOptions } from '../config/swagger.js';
 
 export const loadExpress = (app) => {
+  const normalizeOrigin = (origin) => origin.trim().replace(/\/+$/, '');
+  const corsOrigins =
+    config.cors.origin === '*'
+      ? true
+      : config.cors.origin
+          .split(',')
+          .map(normalizeOrigin)
+          .filter(Boolean);
+
+  // App Runner/ELB sits in front of the app, so trust proxy headers
+  // for correct IP detection and to avoid express-rate-limit warnings.
+  app.set('trust proxy', 1);
   // Security headers
   app.use(helmet());
 
   // CORS
   app.use(
     cors({
-      origin: config.cors.origin === '*' ? true : config.cors.origin.split(','),
+      origin: corsOrigins,
       credentials: config.cors.credentials,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: [
         'Content-Type',
         'Authorization',
+        'x-demo-token',
         'x-app-token',
         'x-csrf-token',
         'x-xsrf-token',
+        'x-eleven-tool-secret',
       ],
     })
   );
 
+  // Prevent 304 Not Modified for API: browser would get empty body and frontend treats 304 as error
+  app.use('/api/', (req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.set('Pragma', 'no-cache');
+    next();
+  });
+
   // Body parsers
-  app.use(express.json({ limit: '20mb' }));
+  app.use(
+    express.json({
+      limit: '20mb',
+      verify: (req, _res, buf) => {
+        if (buf?.length) {
+          req.rawBody = buf.toString('utf8');
+        }
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
   // Rate limiting - más estricto para prevenir abuso
@@ -60,8 +90,14 @@ export const loadExpress = (app) => {
       });
     },
     skip: (req) => {
-      // No aplicar rate limiting a health checks
-      return req.url.includes('/health');
+      // No aplicar rate limiting a health checks, WebSocket stream de Twilio
+      // ni webhooks de post-llamada de ElevenLabs.
+      return (
+        req.url.includes('/health') ||
+        req.url.includes('/twilio/stream') ||
+        req.url.includes('/twilio/sms-status') ||
+        req.url.includes('/eleven/post-call')
+      );
     },
   });
 
@@ -121,10 +157,8 @@ export const loadExpress = (app) => {
       ...(req.get('authorization') && { hasAuth: !!req.get('authorization') }),
     };
     
-    // Para rutas 404, usar nivel warn para destacarlas
-    const is404Route = req.url.includes('/auth/me') || req.url.includes('/api/v1/auth/me');
-    const logLevel = is404Route ? 'warn' : 'info';
-    const logMessage = is404Route ? 'Incoming request to non-existent route' : 'Incoming request';
+    const logLevel = 'info';
+    const logMessage = 'Incoming request';
     
     logger[logLevel](logData, logMessage);
     next();

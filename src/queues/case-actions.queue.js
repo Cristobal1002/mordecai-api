@@ -1,12 +1,83 @@
+/**
+ * Case actions queue shared with mordecai-workers.
+ * Supports on-demand and automation-driven actions.
+ */
 import { Queue } from 'bullmq';
-import { redisConnection } from './redis.js';
+import IORedis from 'ioredis';
+import { logger } from '../utils/logger.js';
 
-export const CASE_ACTIONS_QUEUE = 'case-actions';
+export const CASE_ACTIONS_QUEUE_NAME = 'case-actions';
 
-export const JOB_TYPES = {
+export const CASE_ACTION_JOB_TYPES = {
   CALL_CASE: 'CALL_CASE',
+  SMS_CASE: 'SMS_CASE',
+  EMAIL_CASE: 'EMAIL_CASE',
+  SYNC_CALL_SUMMARY: 'SYNC_CALL_SUMMARY',
 };
 
-export const caseActionsQueue = new Queue(CASE_ACTIONS_QUEUE, {
-  connection: redisConnection,
-});
+// Backward compatibility for older imports
+export const JOB_TYPES = CASE_ACTION_JOB_TYPES;
+
+let connection = null;
+let queue = null;
+
+function getConnection() {
+  if (connection) return connection;
+
+  const url = process.env.REDIS_URL;
+  if (!url) return null;
+
+  connection = new IORedis(url, { maxRetriesPerRequest: null });
+  connection.on('error', (err) =>
+    logger.error({ err }, 'Case actions queue Redis error')
+  );
+
+  return connection;
+}
+
+export function getCaseActionsQueue() {
+  if (queue) return queue;
+
+  const conn = getConnection();
+  if (!conn) return null;
+
+  queue = new Queue(CASE_ACTIONS_QUEUE_NAME, { connection: conn });
+  return queue;
+}
+
+export async function addCaseActionJob(jobName, data, options = {}) {
+  const q = getCaseActionsQueue();
+  if (!q) return null;
+
+  const job = await q.add(jobName, data, {
+    attempts: Number(process.env.WORKER_ATTEMPTS) || 3,
+    backoff: { type: 'exponential', delay: 2000 },
+    removeOnComplete: 1000,
+    removeOnFail: 5000,
+    ...options,
+  });
+
+  return job.id;
+}
+
+/**
+ * On-demand call helper (used by cases module)
+ */
+export async function addCallCaseJob(tenantId, caseId) {
+  const jobId = `CALL_CASE-on-demand-${caseId}-${Date.now()}`;
+
+  const id = await addCaseActionJob(
+    CASE_ACTION_JOB_TYPES.CALL_CASE,
+    { tenantId, caseId },
+    { jobId }
+  );
+
+  if (id) {
+    logger.info(
+      { tenantId, caseId, jobId: id },
+      'On-demand call job enqueued'
+    );
+  }
+
+  return id;
+}

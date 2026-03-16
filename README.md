@@ -155,8 +155,34 @@ Ver `.env.example` para todas las variables disponibles. Las principales son:
 
 #### CORS y Rate Limiting
 - `CORS_ORIGIN` - Orígenes permitidos (default: "*")
+- `CORS_CREDENTIALS` - Permitir credenciales (cookies) en peticiones CORS. En producción con frontend en otro dominio debe ser `true`.
 - `RATE_LIMIT_WINDOW_MS` - Ventana de tiempo para rate limiting en milisegundos (default: 60000 = 1 minuto)
 - `RATE_LIMIT_MAX` - Máximo de requests por ventana (default: 100 = 100 peticiones por minuto)
+
+#### Producción - OAuth (Login con Google/Microsoft)
+
+Cuando frontend y backend están en **dominios distintos** (ej: frontend en Amplify, API en otro host), el login OAuth falla si no se configuran correctamente las cookies y CORS. El usuario queda en `/login` tras autenticarse porque las cookies no se envían en peticiones cross-origin.
+
+**Variables obligatorias en producción (cross-origin):**
+
+| Variable | Valor | Motivo |
+|----------|-------|--------|
+| `CORS_ORIGIN` | URL exacta del frontend (ej: `https://qa.xxx.amplifyapp.com`) | No usar `*`; con credenciales el navegador exige un origen específico |
+| `CORS_CREDENTIALS` | `true` | Sin esto, las cookies no se envían en fetch con `credentials: 'include'` |
+| `AUTH_COOKIE_SAMESITE` | `none` | Con `lax` (default) las cookies no se envían en peticiones cross-site |
+| `AUTH_COOKIE_SECURE` | `true` | Obligatorio cuando `SameSite=None` |
+| `COGNITO_FRONTEND_REDIRECT_URI` | `https://<frontend>/auth/callback` | URL del callback OAuth en el frontend (donde el backend redirige tras el login) |
+
+**Ejemplo `.env` producción:**
+```env
+CORS_ORIGIN=https://qa.df09u9bgs5ngk.amplifyapp.com
+CORS_CREDENTIALS=true
+AUTH_COOKIE_SAMESITE=none
+AUTH_COOKIE_SECURE=true
+COGNITO_FRONTEND_REDIRECT_URI=https://qa.df09u9bgs5ngk.amplifyapp.com/auth/callback
+```
+
+En Cognito, la URL de callback autorizada debe incluir la ruta del **backend** (donde Cognito envía el código), no la del frontend.
 
 ### Base de Datos
 
@@ -308,6 +334,7 @@ Los errores se manejan automáticamente por el middleware de errores y se format
 - **Módulo de Ejemplo**: `src/modules/example/` - Ejemplo completo de CRUD
 - **Documentación Swagger**: http://localhost:3000/api/v1/docs (en desarrollo)
 - **Health Checks**: Endpoints para monitoreo y health checks
+- **Payment Channels**: [docs/PAYMENT_CHANNELS.md](docs/PAYMENT_CHANNELS.md) - Canales de pago, referencia para conciliación y flujo completo
 
 ## 📄 Licencia
 

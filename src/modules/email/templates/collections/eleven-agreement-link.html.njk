@@ -1,0 +1,17 @@
+{% extends "base/layout.njk" %}
+
+{% block content %}
+<p style="margin:0 0 12px;color:#f8f9fb;">Hello {{ debtor_name }},</p>
+<p style="margin:0 0 12px;color:#d1d5db;">
+  Thanks for speaking with {{ tenant_name | default("our collections team") }}.
+  Use the secure button below to review your account, complete payment, or upload dispute evidence.
+</p>
+<p style="margin:20px 0;">
+  <a href="{{ payment_link }}" style="display:inline-block;background:#9c77f5;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">
+    Open Secure Case Link
+  </a>
+</p>
+<p style="margin:16px 0 0;color:#9ca3af;">
+  If you need help, reply to this email.
+</p>
+{% endblock %}

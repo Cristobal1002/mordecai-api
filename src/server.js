@@ -1,8 +1,10 @@
+import http from 'http';
 import express from 'express';
 import { config } from './config/index.js';
 import { logger } from './utils/logger.js';
 import { loadExpress } from './loaders/express.load.js';
 import { loadDatabase } from './loaders/sequelize.load.js';
+import { attachTwilioStreamServer } from './modules/twilio/calls/twilio.stream.js';
 
 let server;
 
@@ -16,7 +18,10 @@ export const startServer = async () => {
     // Cargar middlewares, rutas, JSON, CORS
     loadExpress(app);
 
-    server = app.listen(config.app.port, () => {
+    const httpServer = http.createServer(app);
+    attachTwilioStreamServer(httpServer);
+
+    server = httpServer.listen(config.app.port, () => {
       logger.info(
         {
           port: config.app.port,
@@ -31,7 +36,15 @@ export const startServer = async () => {
 
     return server;
   } catch (error) {
-    logger.error({ error }, 'Error starting the server');
+    logger.error(
+      {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+        err: error,
+      },
+      'Error starting the server'
+    );
     process.exit(1);
   }
 };

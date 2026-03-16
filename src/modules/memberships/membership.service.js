@@ -6,6 +6,8 @@ import {
   TenantInvitation,
   User,
 } from '../../models/index.js';
+import { sendInvitationEmail } from '../../services/email.service.js';
+import { logger } from '../../utils/logger.js';
 import {
   BadRequestError,
   ForbiddenError,
@@ -166,7 +168,7 @@ export const membershipService = {
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    return await TenantInvitation.create({
+    const invitation = await TenantInvitation.create({
       tenantId,
       email,
       role,
@@ -175,6 +177,55 @@ export const membershipService = {
       expiresAt,
       createdBy: requester.id,
     });
+
+    const tenant = await Tenant.findByPk(tenantId, { attributes: ['name'] });
+    const inviterName = requester.fullName || requester.email || 'A team member';
+    const tenantName = tenant?.name || 'the team';
+    const baseUrl =
+      process.env.FRONTEND_APP_URL ||
+      process.env.COGNITO_FRONTEND_REDIRECT_URI?.replace(/\/auth\/callback$/, '') ||
+      'https://app.mordecai.ai';
+    const acceptUrl = `${baseUrl.replace(/\/$/, '')}/invitations/${token}`;
+
+    try {
+      await sendInvitationEmail({
+        to: email,
+        inviterName,
+        tenantName,
+        acceptUrl,
+        expiresInDays: 7,
+      });
+    } catch (err) {
+      logger.warn({ err, invitationId: invitation.id, email }, 'Failed to send invitation email');
+      throw new BadRequestError(
+        'Invitation was created but we could not send the email. Please try again or contact support.'
+      );
+    }
+
+    return invitation;
+  },
+
+  getInvitationPreview: async (token) => {
+    const invitation = await TenantInvitation.findOne({
+      where: { token, status: 'pending' },
+    });
+
+    if (!invitation) {
+      throw new NotFoundError('Invitation');
+    }
+
+    if (invitation.expiresAt && invitation.expiresAt < new Date()) {
+      await invitation.update({ status: 'expired' });
+      throw new BadRequestError('Invitation expired.');
+    }
+
+    const tenant = await Tenant.findByPk(invitation.tenantId, { attributes: ['name'] });
+    return {
+      tenantName: tenant?.name || 'the team',
+      role: invitation.role || 'member',
+      email: invitation.email,
+      expiresAt: invitation.expiresAt,
+    };
   },
 
   acceptInvitation: async (token, req) => {

@@ -28,6 +28,12 @@ export class Tenant extends Model {
           type: DataTypes.JSONB,
           defaultValue: {},
         },
+        collectionsEngineVersion: {
+          type: DataTypes.STRING(8),
+          allowNull: false,
+          defaultValue: 'v1',
+          field: 'collections_engine_version',
+        },
         createdAt: {
           type: DataTypes.DATE,
           field: 'created_at',

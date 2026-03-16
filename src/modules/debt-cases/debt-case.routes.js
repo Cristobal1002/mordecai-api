@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { debtCaseController } from './debt-case.controller.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 import { param } from 'express-validator';
+import { requireAuth } from '../../middlewares/index.js';
 
 const router = Router();
 
@@ -15,9 +16,23 @@ const validateCase = [
     param('caseId').isUUID().withMessage('Invalid Case ID')
 ];
 
+const validateCaseId = [
+    param('caseId').isUUID().withMessage('Invalid Case ID')
+];
+
+// GET /api/v1/debt-cases/payment-instructions/:caseId — tenant inferred from auth
+router.get(
+    '/payment-instructions/:caseId',
+    requireAuth(),
+    validateCaseId,
+    validateRequest,
+    debtCaseController.getPaymentInstructions
+);
+
 // GET /api/v1/debt-cases/:tenantId
 router.get(
     '/:tenantId',
+    requireAuth(),
     validateTenant,
     validateRequest,
     debtCaseController.list
@@ -26,6 +41,7 @@ router.get(
 // GET /api/v1/debt-cases/:tenantId/:caseId/logs
 router.get(
     '/:tenantId/:caseId/logs',
+    requireAuth(),
     validateCase,
     validateRequest,
     debtCaseController.getLogs

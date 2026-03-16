@@ -56,16 +56,27 @@ export const config = {
       // 'alter': modifica tablas existentes
       // 'force': elimina y recrea tablas (¡CUIDADO en producción!)
       // false: no sincroniza (usa migraciones)
-      mode: process.env.DB_SYNC_MODE || false,
+      // process.env.DB_SYNC_MODE es siempre string; 'false' y '' deben ser false
+      mode: (() => {
+        const v = process.env.DB_SYNC_MODE;
+        if (!v || v === 'false' || v === '0') return false;
+        return v;
+      })(),
     },
   },
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: process.env.CORS_CREDENTIALS === 'true',
+    origin:
+      process.env.CORS_ORIGIN ||
+      (process.env.NODE_ENV === 'production' ? '*' : 'http://localhost:8080'),
+    credentials:
+      process.env.CORS_CREDENTIALS === 'true' ||
+      (process.env.NODE_ENV !== 'production' && !process.env.CORS_ORIGIN),
   },
   rateLimit: {
     windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000, // 1 minuto
     max: Number(process.env.RATE_LIMIT_MAX) || 100, // 100 requests por minuto
   },
+  // PMS credentials at rest: base64-encoded 32-byte key. Generate: openssl rand -base64 32
+  credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY || null,
 };
 

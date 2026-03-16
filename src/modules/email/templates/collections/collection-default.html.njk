@@ -1,0 +1,26 @@
+{% extends "base/layout.njk" %}
+
+{% block content %}
+{% if custom_email_body_html %}
+{{ custom_email_body_html | safe }}
+{% else %}
+<p style="margin:0 0 12px;color:#f8f9fb;">Hi {{ debtor_name }},</p>
+<p style="margin:0 0 12px;color:#d1d5db;">
+  This is a reminder from {{ tenant_name | default("your collections team") }} regarding your account.
+</p>
+<p style="margin:0 0 12px;color:#d1d5db;">
+  Days past due: <strong style="color:#ffffff;">{{ days_past_due }}</strong>.
+</p>
+{% if payment_link %}
+<p style="margin:20px 0;">
+  <a href="{{ payment_link }}" style="display:inline-block;background:#9c77f5;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;">
+    Complete payment
+  </a>
+</p>
+{% endif %}
+<p style="margin:16px 0 0;color:#9ca3af;">
+  If you need a payment plan, reply to this email and we will assist.
+</p>
+{% endif %}
+{% endblock %}
+

@@ -15,6 +15,7 @@ import {
   BadRequestError,
   ConflictError,
   UnauthorizedError,
+  UseSocialLoginError,
 } from '../../errors/index.js';
 import { logger } from '../../utils/logger.js';
 
@@ -72,6 +73,62 @@ const getExternalProviderByEmail = async (email) => {
   } catch {
     return null;
   }
+};
+
+/**
+ * List all Cognito users with given email (handles duplicates: native + federated).
+ */
+const listUsersByEmail = async (email) => {
+  if (!email || typeof email !== 'string') return [];
+  const trimmed = String(email).trim();
+  if (!trimmed) return [];
+
+  const users = [];
+  let paginationToken = null;
+
+  do {
+    const command = new ListUsersCommand({
+      UserPoolId: userPoolId,
+      Filter: `email = "${trimmed}"`,
+      Limit: 10,
+      PaginationToken: paginationToken || undefined,
+    });
+    const result = await cognitoClient.send(command);
+    if (result.Users?.length) {
+      users.push(...result.Users);
+    }
+    paginationToken = result.PaginationToken || null;
+  } while (paginationToken);
+
+  return users;
+};
+
+/**
+ * Get auth method(s) for an email.
+ * @returns {{ socialProvider: 'Google'|'Microsoft'|null, hasNative: boolean }}
+ */
+const getAuthMethodByEmail = async (email) => {
+  const users = await listUsersByEmail(email);
+  let socialProvider = null;
+  let hasNative = false;
+
+  for (const user of users) {
+    const identitiesValue = user?.Attributes?.find((attr) => attr.Name === 'identities')?.Value;
+    if (identitiesValue) {
+      try {
+        const identities = JSON.parse(identitiesValue);
+        const pn = (identities?.[0]?.providerName || '').toLowerCase();
+        if (pn.includes('google')) socialProvider = 'Google';
+        else if (pn.includes('microsoft') || pn.includes('oidc')) socialProvider = socialProvider || 'Microsoft';
+      } catch {
+        // ignore
+      }
+    } else {
+      hasNative = true;
+    }
+  }
+
+  return { socialProvider, hasNative };
 };
 
 const normalizeDomain = (domain) => domain?.replace(/\/+$/, '');
@@ -199,6 +256,22 @@ const normalizeOauthTokens = (data, state) => ({
   },
 });
 
+const fetchOAuthUserInfo = async (domain, accessToken) => {
+  if (!domain || !accessToken) return null;
+  try {
+    const { data } = await axios.get(
+      `${domain.replace(/\/+$/, '')}/oauth2/userInfo`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    return data || null;
+  } catch (err) {
+    logger.warn({ err }, 'Failed to fetch OAuth userInfo');
+    return null;
+  }
+};
+
 export const authService = {
   register: async ({
     email,
@@ -210,6 +283,28 @@ export const authService = {
   }) => {
     if (!acceptedTerms) {
       throw new BadRequestError('You must accept the terms.');
+    }
+
+    // Proactive check: Cognito does NOT throw UsernameExistsException when
+    // the user exists only via federated (Google/Microsoft) - so we must check first
+    const trimmedEmail = typeof email === 'string' ? email.trim() : '';
+    if (trimmedEmail) {
+      try {
+        const { exists, method } = await authService.checkAuthMethod({
+          email: trimmedEmail,
+        });
+        if (exists) {
+          if (method === 'Google' || method === 'Microsoft') {
+            throw new ConflictError(
+              `You already signed up with ${method}. Please use social login.`
+            );
+          }
+          throw new ConflictError('This email is already registered. Please sign in.');
+        }
+      } catch (err) {
+        if (err instanceof ConflictError) throw err;
+        logger.warn({ err }, 'Failed to check auth method before register, continuing');
+      }
     }
 
     const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber || phone);
@@ -293,6 +388,17 @@ export const authService = {
 
       return normalizeAuthResult(result.AuthenticationResult);
     } catch (error) {
+      if (error?.name === 'NotAuthorizedException' || error?.name === 'UserNotFoundException') {
+        try {
+          const { socialProvider } = await getAuthMethodByEmail(email);
+          if (socialProvider === 'Google' || socialProvider === 'Microsoft') {
+            throw new UseSocialLoginError(socialProvider);
+          }
+        } catch (inner) {
+          if (inner instanceof UseSocialLoginError) throw inner;
+          logger.warn({ err: inner }, 'Failed to resolve auth method by email');
+        }
+      }
       mapCognitoError(error);
     }
   },
@@ -324,6 +430,11 @@ export const authService = {
   },
 
   forgotPassword: async ({ email }) => {
+    const { hasNative, socialProvider } = await getAuthMethodByEmail(email);
+    if (socialProvider && !hasNative) {
+      throw new UseSocialLoginError(socialProvider);
+    }
+
     const command = new ForgotPasswordCommand({
       ClientId: clientId,
       Username: email,
@@ -336,11 +447,24 @@ export const authService = {
         delivery: result.CodeDeliveryDetails || null,
       };
     } catch (error) {
+      const msg = error?.message || '';
+      if (
+        msg.includes('Cannot reset password') ||
+        msg.includes('no registered/verified email')
+      ) {
+        const { socialProvider: provider } = await getAuthMethodByEmail(email);
+        throw new UseSocialLoginError(provider || 'Google or Microsoft');
+      }
       mapCognitoError(error);
     }
   },
 
   resetPassword: async ({ email, code, password }) => {
+    const { hasNative, socialProvider } = await getAuthMethodByEmail(email);
+    if (socialProvider && !hasNative) {
+      throw new UseSocialLoginError(socialProvider);
+    }
+
     const command = new ConfirmForgotPasswordCommand({
       ClientId: clientId,
       Username: email,
@@ -439,5 +563,28 @@ export const authService = {
       logger.error({ err: error }, 'OAuth token exchange failed');
       throw new UnauthorizedError(message);
     }
+  },
+
+  oauthFetchUserInfo: async (accessToken) => {
+    try {
+      const { domain } = getOauthConfig();
+      return await fetchOAuthUserInfo(domain, accessToken);
+    } catch {
+      return null;
+    }
+  },
+
+  checkAuthMethod: async ({ email }) => {
+    if (!email || typeof email !== 'string') {
+      return { exists: false, method: null, hasNative: false };
+    }
+    const { socialProvider, hasNative } = await getAuthMethodByEmail(email.trim());
+    if (socialProvider) {
+      return { exists: true, method: socialProvider, hasNative };
+    }
+    if (hasNative) {
+      return { exists: true, method: 'password', hasNative: true };
+    }
+    return { exists: false, method: null, hasNative: false };
   },
 };

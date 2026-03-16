@@ -70,6 +70,10 @@ export const refreshValidator = [
     .withMessage('refreshToken is required'),
 ];
 
+export const checkAuthMethodValidator = [
+  query('email').isEmail().withMessage('Valid email is required'),
+];
+
 export const oauthStartValidator = [
   query('provider')
     .isString()
@@ -117,4 +121,17 @@ export const logoutValidator = [
     .isString()
     .isLength({ min: 10 })
     .withMessage('refreshToken is required'),
+];
+
+export const updateMeValidator = [
+  body('fullName')
+    .optional()
+    .isString()
+    .isLength({ min: 2 })
+    .withMessage('fullName must have at least 2 characters'),
+  body('phone')
+    .optional({ nullable: true })
+    .customSanitizer(normalizePhoneInput)
+    .custom(validateE164)
+    .withMessage('phone must be in E.164 format, e.g. +15551234567'),
 ];
