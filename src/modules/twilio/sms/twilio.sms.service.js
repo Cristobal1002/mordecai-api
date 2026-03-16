@@ -1,9 +1,25 @@
 import { CollectionEvent, InteractionLog } from '../../../models/index.js';
 import { logger } from '../../../utils/logger.js';
-import { buildCollectionSmsBody } from './twilio.sms.template.js';
+import {
+  buildCollectionSmsBody,
+  estimateSmsTransportMeta,
+  isColombiaDestinationPhone,
+} from './twilio.sms.template.js';
 import { sendTwilioSms } from './twilio.sms.client.js';
 import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
 import { resolveChannelTemplate } from '../../templates/template-resolution.service.js';
+
+const parseBooleanFlag = (value, defaultValue = false) => {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return defaultValue;
+};
+
+const SMS_CO_STRICT_MODE = parseBooleanFlag(process.env.SMS_CO_STRICT_MODE, false);
+const SMS_CO_DISABLE_LINK = parseBooleanFlag(process.env.SMS_CO_DISABLE_LINK, false);
 
 const createCollectionEvent = async ({
   automationId,
@@ -26,6 +42,7 @@ const createInteractionLog = async ({
   debtCaseId,
   debtorId,
   status = 'queued',
+  aiData = {},
 }) => {
   return InteractionLog.create({
     tenantId,
@@ -36,6 +53,7 @@ const createInteractionLog = async ({
     channelProvider: 'twilio',
     direction: 'OUTBOUND',
     startedAt: new Date(),
+    aiData,
   });
 };
 
@@ -51,6 +69,9 @@ export const sendCollectionSms = async ({
   const debtCaseId = debtCase?.id || state?.debtCaseId;
   const debtorId = debtor?.id || debtCase?.debtorId || null;
   const to = debtor?.phone;
+  const isColombiaDestination = isColombiaDestinationPhone(to);
+  const strictColombiaMode = SMS_CO_STRICT_MODE && isColombiaDestination;
+  const includePaymentLink = !(strictColombiaMode && SMS_CO_DISABLE_LINK);
 
   if (!to) {
     await createCollectionEvent({
@@ -121,16 +142,43 @@ export const sendCollectionSms = async ({
     dueDate: debtCase?.dueDate || '',
     paymentLink,
     tenantName: tenant?.name || '',
+    destinationPhone: to,
+    strictColombiaMode,
+    includePaymentLink,
   });
+  const smsMeta = estimateSmsTransportMeta(body);
 
   let interaction = null;
 
   try {
+    logger.info(
+      {
+        tenantId,
+        debtCaseId,
+        automationId: automationId || null,
+        destinationCountry: isColombiaDestination ? 'CO' : 'OTHER',
+        strictColombiaMode,
+        includePaymentLink,
+        smsEncoding: smsMeta.encoding,
+        smsSegments: smsMeta.segments,
+        smsLength: smsMeta.length,
+      },
+      'Dispatching collection SMS'
+    );
+
     interaction = await createInteractionLog({
       tenantId,
       debtCaseId,
       debtorId,
       status: 'queued',
+      aiData: {
+        destination_country: isColombiaDestination ? 'CO' : 'OTHER',
+        strict_colombia_mode: strictColombiaMode,
+        include_payment_link: includePaymentLink,
+        estimated_encoding: smsMeta.encoding,
+        estimated_segments: smsMeta.segments,
+        estimated_units: smsMeta.units,
+      },
     });
 
     const providerResult = await sendTwilioSms({ to, body });
@@ -140,6 +188,10 @@ export const sendCollectionSms = async ({
       providerRef: providerResult.messageSid,
       summary: body,
       endedAt: new Date(),
+      aiData: {
+        ...(interaction.aiData || {}),
+        provider_status: providerResult.status || null,
+      },
     });
 
     await createCollectionEvent({
@@ -152,6 +204,9 @@ export const sendCollectionSms = async ({
         to,
         preview: body.slice(0, 160),
         providerStatus: providerResult.status,
+        encoding: smsMeta.encoding,
+        estimatedSegments: smsMeta.segments,
+        estimatedUnits: smsMeta.units,
       },
     });
 
@@ -164,7 +219,17 @@ export const sendCollectionSms = async ({
     };
   } catch (error) {
     logger.error(
-      { err: error, tenantId, debtCaseId, automationId },
+      {
+        err: error,
+        tenantId,
+        debtCaseId,
+        automationId,
+        destinationCountry: isColombiaDestination ? 'CO' : 'OTHER',
+        strictColombiaMode,
+        includePaymentLink,
+        smsEncoding: smsMeta.encoding,
+        smsSegments: smsMeta.segments,
+      },
       'Failed to send collection SMS'
     );
 
@@ -193,6 +258,8 @@ export const sendCollectionSms = async ({
       payload: {
         interactionLogId: interaction?.id || null,
         reason: error?.message || 'SMS dispatch failed',
+        encoding: smsMeta.encoding,
+        estimatedSegments: smsMeta.segments,
       },
     });
 
