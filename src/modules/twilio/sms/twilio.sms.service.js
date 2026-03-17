@@ -1,9 +1,15 @@
 import { CollectionEvent, InteractionLog } from '../../../models/index.js';
 import { logger } from '../../../utils/logger.js';
-import { buildCollectionSmsBody } from './twilio.sms.template.js';
+import {
+  buildConciseLinkSmsBody,
+  buildCollectionSmsBody,
+  estimateSmsTransportMeta,
+} from './twilio.sms.template.js';
 import { sendTwilioSms } from './twilio.sms.client.js';
 import { getOrCreatePaymentLinkUrl } from '../../pay/payment-link-resolver.service.js';
 import { resolveChannelTemplate } from '../../templates/template-resolution.service.js';
+
+const TEMP_DISABLE_COLLECTION_SMS_LINK = true; // TODO remove this to enable link
 
 const createCollectionEvent = async ({
   automationId,
@@ -26,6 +32,7 @@ const createInteractionLog = async ({
   debtCaseId,
   debtorId,
   status = 'queued',
+  aiData = {},
 }) => {
   return InteractionLog.create({
     tenantId,
@@ -36,6 +43,7 @@ const createInteractionLog = async ({
     channelProvider: 'twilio',
     direction: 'OUTBOUND',
     startedAt: new Date(),
+    aiData,
   });
 };
 
@@ -70,14 +78,16 @@ export const sendCollectionSms = async ({
     };
   }
 
-  // Always ensure a payment link (with ?source=sms&aid= for click attribution)
-  const paymentLink = await getOrCreatePaymentLinkUrl({
-    tenantId,
-    debtCaseId,
-    paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
-    source: 'sms',
-    automationId,
-  });
+  const paymentLink = TEMP_DISABLE_COLLECTION_SMS_LINK
+    ? ''
+    : await getOrCreatePaymentLinkUrl({
+        tenantId,
+        debtCaseId,
+        paymentAgreementId: debtCase?.meta?.last_agreement_id || null,
+        source: 'sms',
+        automationId,
+        includeAttribution: false,
+      });
 
   const smsTemplate = await resolveChannelTemplate({
     tenantId,
@@ -110,27 +120,50 @@ export const sendCollectionSms = async ({
     };
   }
 
-  const body = buildCollectionSmsBody({
-    debtorName: debtor?.fullName,
-    amountDueCents: debtCase?.amountDueCents,
-    currency: debtCase?.currency,
-    daysPastDue: debtCase?.daysPastDue,
-    stageName: stage?.name,
-    customTemplate,
-    meta: debtCase?.meta || {},
-    dueDate: debtCase?.dueDate || '',
-    paymentLink,
-    tenantName: tenant?.name || '',
-  });
+  const body = TEMP_DISABLE_COLLECTION_SMS_LINK
+    ? buildConciseLinkSmsBody({
+        debtorName: debtor?.fullName,
+        tenantName: tenant?.name || '',
+        paymentLink: '',
+        fallbackText: 'Reply to continue. STOP=opt out.',
+      })
+    : buildCollectionSmsBody({
+        debtorName: debtor?.fullName,
+        customTemplate,
+        paymentLink,
+        tenantName: tenant?.name || '',
+      });
+  const smsMeta = estimateSmsTransportMeta(body);
 
   let interaction = null;
 
   try {
+    logger.info(
+      {
+        tenantId,
+        debtCaseId,
+        automationId: automationId || null,
+        smsEncoding: smsMeta.encoding,
+        smsSegments: smsMeta.segments,
+        smsLength: smsMeta.length,
+      },
+      'Dispatching collection SMS'
+    );
+
     interaction = await createInteractionLog({
       tenantId,
       debtCaseId,
       debtorId,
       status: 'queued',
+      aiData: {
+        delivery_profile: 'concise_link',
+        payment_link_enabled: !TEMP_DISABLE_COLLECTION_SMS_LINK,
+        payment_link_attribution: 'disabled_for_sms',
+        template_reason: smsTemplate.reason || null,
+        estimated_encoding: smsMeta.encoding,
+        estimated_segments: smsMeta.segments,
+        estimated_units: smsMeta.units,
+      },
     });
 
     const providerResult = await sendTwilioSms({ to, body });
@@ -140,6 +173,10 @@ export const sendCollectionSms = async ({
       providerRef: providerResult.messageSid,
       summary: body,
       endedAt: new Date(),
+      aiData: {
+        ...(interaction.aiData || {}),
+        provider_status: providerResult.status || null,
+      },
     });
 
     await createCollectionEvent({
@@ -152,6 +189,9 @@ export const sendCollectionSms = async ({
         to,
         preview: body.slice(0, 160),
         providerStatus: providerResult.status,
+        encoding: smsMeta.encoding,
+        estimatedSegments: smsMeta.segments,
+        estimatedUnits: smsMeta.units,
       },
     });
 
@@ -164,7 +204,14 @@ export const sendCollectionSms = async ({
     };
   } catch (error) {
     logger.error(
-      { err: error, tenantId, debtCaseId, automationId },
+      {
+        err: error,
+        tenantId,
+        debtCaseId,
+        automationId,
+        smsEncoding: smsMeta.encoding,
+        smsSegments: smsMeta.segments,
+      },
       'Failed to send collection SMS'
     );
 
@@ -193,6 +240,8 @@ export const sendCollectionSms = async ({
       payload: {
         interactionLogId: interaction?.id || null,
         reason: error?.message || 'SMS dispatch failed',
+        encoding: smsMeta.encoding,
+        estimatedSegments: smsMeta.segments,
       },
     });
 

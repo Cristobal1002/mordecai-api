@@ -20,6 +20,7 @@ import {
 import { sendSesEmail } from "../email/ses/ses.email.client.js";
 import { renderElevenLinkEmail } from "../email/ses/ses.email.template.js";
 import { sendTwilioSms } from "../twilio/sms/twilio.sms.client.js";
+import { buildConciseLinkSmsBody } from "../twilio/sms/twilio.sms.template.js";
 import { logger } from "../../utils/logger.js";
 import { registerTwilioCallInElevenLabs } from "./eleven.client.js";
 import {
@@ -1076,13 +1077,30 @@ const createLinkDeliveryInteractionLog = async ({
     error,
   });
 
-const buildAgreementSmsBody = ({ debtorName, tenantName, paymentLinkUrl }) =>
-  `Hi ${debtorName}, thanks for speaking with ${tenantName}. ` +
-  `Here is your secure case link to complete payment or upload dispute evidence: ${paymentLinkUrl}`;
+const buildAgreementSmsBody = ({
+  debtorName,
+  tenantName,
+  paymentLinkUrl,
+}) =>
+  buildConciseLinkSmsBody({
+    debtorName,
+    tenantName,
+    paymentLink: paymentLinkUrl,
+    fallbackText: "Reply to continue. STOP=opt out.",
+  });
 
-const buildDisputeSmsBody = ({ debtorName, tenantName, paymentLinkUrl }) =>
-  `Hi ${debtorName}, we registered your dispute with ${tenantName}. ` +
-  `Use this secure link to upload evidence and track updates: ${paymentLinkUrl}`;
+const buildDisputeSmsBody = ({
+  debtorName,
+  tenantName,
+  paymentLinkUrl,
+}) =>
+  buildConciseLinkSmsBody({
+    debtorName,
+    tenantName,
+    paymentLink: paymentLinkUrl,
+    linkLabel: "Dispute link:",
+    fallbackText: "Reply for support. STOP=opt out.",
+  });
 
 const sendCaseLinkSms = async ({
   tenantId,
@@ -1139,6 +1157,8 @@ const sendCaseLinkSms = async ({
         payment_link_url: paymentLinkUrl,
         [entityKey]: entityValue,
         context: `${context}_link_delivery`,
+        delivery_profile: "concise_link",
+        payment_link_attribution: "disabled_for_sms",
       },
     });
 
@@ -1176,6 +1196,8 @@ const sendCaseLinkSms = async ({
         payment_link_url: paymentLinkUrl,
         [entityKey]: entityValue,
         context: `${context}_link_delivery`,
+        delivery_profile: "concise_link",
+        payment_link_attribution: "disabled_for_sms",
       },
     });
     await createCollectionEvent({
@@ -1953,12 +1975,12 @@ export const createPaymentAgreementFromTool = async ({
   const deliveryResults = [];
 
   for (const channel of deliveryChannels) {
-    const attributedLink = appendPaymentLinkAttribution(
-      paymentLinkUrl,
-      channel,
-      resolvedAutomationId,
-    );
     if (channel === "email") {
+      const attributedLink = appendPaymentLinkAttribution(
+        paymentLinkUrl,
+        channel,
+        resolvedAutomationId,
+      );
       // eslint-disable-next-line no-await-in-loop
       deliveryResults.push(
         await sendCaseLinkEmail({
@@ -1983,7 +2005,7 @@ export const createPaymentAgreementFromTool = async ({
           tenantId,
           debtCaseId: debtCase.id,
           debtor: debtCase.debtor,
-          paymentLinkUrl: attributedLink,
+          paymentLinkUrl,
           tenantName: tenantDisplayName,
           automationId: resolvedAutomationId,
           context: "agreement",
@@ -2263,12 +2285,12 @@ export const createDisputeFromTool = async ({
 
   if (shouldSendLink) {
     for (const channel of deliveryChannels) {
-      const attributedLink = appendPaymentLinkAttribution(
-        paymentLinkUrl,
-        channel,
-        resolvedAutomationId,
-      );
       if (channel === "email") {
+        const attributedLink = appendPaymentLinkAttribution(
+          paymentLinkUrl,
+          channel,
+          resolvedAutomationId,
+        );
         // eslint-disable-next-line no-await-in-loop
         deliveryResults.push(
           await sendCaseLinkEmail({
@@ -2294,7 +2316,7 @@ export const createDisputeFromTool = async ({
             tenantId,
             debtCaseId: debtCase.id,
             debtor: debtCase.debtor,
-            paymentLinkUrl: attributedLink,
+            paymentLinkUrl,
             tenantName: tenantDisplayName,
             automationId: resolvedAutomationId,
             context: "dispute",

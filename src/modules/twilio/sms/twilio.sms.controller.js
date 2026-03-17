@@ -41,6 +41,12 @@ export const twilioSmsController = {
 
       const updateData = {
         status: mappedStatus,
+        aiData: {
+          ...(interaction.aiData || {}),
+          twilio_status: messageStatus || null,
+          twilio_error_code: errorCode,
+          twilio_error_message: errorMessage,
+        },
       };
 
       if (isFinal) {
@@ -55,6 +61,16 @@ export const twilioSmsController = {
           errorMessage,
           providerStatus: messageStatus,
         };
+        logger.warn(
+          {
+            interactionId: interaction.id,
+            messageSid,
+            messageStatus,
+            errorCode,
+            errorMessage,
+          },
+          'Twilio SMS delivery reported failure'
+        );
       }
 
       await interaction.update(updateData);

@@ -22,6 +22,7 @@ export const sendTwilioSms = async ({ to, body }) => {
     From: String(fromNumber),
     Body: String(body),
   });
+  payload.set('SmartEncoded', 'true');
 
   if (statusCallbackUrl) {
     payload.set('StatusCallback', statusCallbackUrl);
