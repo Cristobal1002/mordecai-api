@@ -6,6 +6,7 @@ WORKERS_DIR="${WORKERS_DIR:-/home/ubuntu/mordecai-workers}"
 REFRESH_WORKERS_API_DEP="${REFRESH_WORKERS_API_DEP:-1}"
 CLEAN_WORKERS_NODE_MODULES="${CLEAN_WORKERS_NODE_MODULES:-1}"
 ENFORCE_WORKERS_DOCKERIGNORE="${ENFORCE_WORKERS_DOCKERIGNORE:-1}"
+ENFORCE_STACK_DOCKERIGNORE="${ENFORCE_STACK_DOCKERIGNORE:-1}"
 SERVICES_TO_BUILD="${SERVICES_TO_BUILD:-mordecai-api mordecai-workers}"
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
@@ -25,6 +26,32 @@ fi
 STACK_DIR="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)"
 echo "Using compose file: $COMPOSE_FILE"
 echo "Working directory: $STACK_DIR"
+
+ensure_stack_dockerignore() {
+  if [[ "$ENFORCE_STACK_DOCKERIGNORE" != "1" ]]; then
+    echo "Skipping stack .dockerignore enforcement (ENFORCE_STACK_DOCKERIGNORE=$ENFORCE_STACK_DOCKERIGNORE)"
+    return
+  fi
+
+  local dockerignore_file
+  dockerignore_file="$STACK_DIR/.dockerignore"
+
+  cat > "$dockerignore_file" <<'EOF'
+*
+!mordecai-api/
+!mordecai-api/**
+!mordecai-workers/
+!mordecai-workers/**
+mordecai-api/.git
+mordecai-api/node_modules
+mordecai-api/.env
+mordecai-workers/.git
+mordecai-workers/node_modules
+mordecai-workers/.env
+EOF
+
+  echo "Wrote $dockerignore_file for parent-context worker builds."
+}
 
 ensure_workers_dockerignore() {
   if [[ "$ENFORCE_WORKERS_DOCKERIGNORE" != "1" ]]; then
@@ -82,6 +109,11 @@ refresh_workers_api_dependency() {
     return
   fi
 
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Skipping worker dependency refresh: node is not installed on the host."
+    return
+  fi
+
   local dep_spec
   dep_spec="$(
     node -e '
@@ -111,6 +143,7 @@ refresh_workers_api_dependency() {
 
 cd "$STACK_DIR"
 
+ensure_stack_dockerignore
 ensure_workers_dockerignore
 refresh_workers_api_dependency
 cleanup_workers_node_modules
