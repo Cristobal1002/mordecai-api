@@ -928,10 +928,18 @@ const updateInteractionCallStateFromTool = async ({
   tool,
   toolOk,
   toolCode,
+  facts,
+  closingContext,
 }) => {
   if (!interaction) return;
 
   const previousStateSnapshot = interaction.aiData?.eleven?.call_state || {};
+  const previousFacts =
+    previousStateSnapshot?.facts &&
+    typeof previousStateSnapshot.facts === "object" &&
+    !Array.isArray(previousStateSnapshot.facts)
+      ? previousStateSnapshot.facts
+      : {};
   const previousState =
     normalizeCallState(previousStateSnapshot.state) ||
     CALL_STATES.VERIFY_IDENTITY;
@@ -945,6 +953,14 @@ const updateInteractionCallStateFromTool = async ({
     toolCode !== undefined &&
     toolCode !== null &&
     String(toolCode).trim() !== "";
+  const nextFacts =
+    facts && typeof facts === "object" && !Array.isArray(facts)
+      ? { ...previousFacts, ...facts }
+      : { ...previousFacts };
+
+  if (String(closingContext || "").trim()) {
+    nextFacts.closing_context = String(closingContext).trim();
+  }
 
   await interaction.update({
     aiData: {
@@ -963,6 +979,7 @@ const updateInteractionCallStateFromTool = async ({
           last_tool_code: hasToolCode
             ? String(toolCode)
             : previousStateSnapshot.last_tool_code || null,
+          facts: nextFacts,
           updated_at: new Date().toISOString(),
         },
       },
@@ -1044,6 +1061,10 @@ export const getCallStateSnapshot = async ({
     proposal_drafts: callState?.proposal_drafts || null,
     proposal_snapshot: callState?.proposal_snapshot || null,
     proposal_committed: callState?.proposal_committed || null,
+    facts:
+      callState?.facts && typeof callState.facts === "object"
+        ? callState.facts
+        : null,
     telemetry: callState?.telemetry || null,
   };
 };
@@ -1784,13 +1805,53 @@ export const createPaymentAgreementFromTool = async ({
     const caseStatus = resolveCaseStatusFromAgreementType(
       existingAgreement.type,
     );
+    const requestedChannel = resolvePreferredDeliveryChannel(effectiveProposal);
+    const requestedDeliveryEmail = normalizeEmailCandidate(
+      effectiveProposal?.delivery_email ||
+        effectiveProposal?.deliveryEmail ||
+        effectiveProposal?.email ||
+        effectiveProposal?.recipient_email ||
+        effectiveProposal?.recipientEmail ||
+        debtCase.debtor?.email ||
+        "",
+    );
+
     await updateInteractionCallStateFromTool({
       interaction,
-      nextState: CALL_STATES.CLOSE,
+      nextState: CALL_STATES.POST_DELIVERY_CONFIRM,
       action: CALL_ACTIONS.CALL_CREATE_PAYMENT_AGREEMENT,
       tool: "create-payment-agreement",
       toolOk: true,
       toolCode: "IDEMPOTENT_HIT",
+      closingContext: "agreement_created",
+      facts: {
+        last_delivery_result: {
+          requested_channel: requestedChannel,
+          attempted_channels: [],
+          successful_channels: [],
+          failed_channels: [],
+          email: requestedDeliveryEmail || null,
+        },
+        last_committed_plan: {
+          plan_type:
+            effectiveProposal?.plan_type ||
+            effectiveProposal?.planType ||
+            null,
+          upfront_amount_cents:
+            effectiveProposal?.upfront_amount_cents ||
+            effectiveProposal?.upfrontAmountCents ||
+            null,
+          installments_count:
+            effectiveProposal?.installments_count ||
+            effectiveProposal?.installmentsCount ||
+            null,
+          delivery_channel: requestedChannel,
+          first_due_date:
+            effectiveProposal?.first_due_date ||
+            effectiveProposal?.firstDueDate ||
+            null,
+        },
+      },
     });
     await createCallToolEvent({
       debtCaseId: debtCase.id,
@@ -1812,7 +1873,7 @@ export const createPaymentAgreementFromTool = async ({
       proposal_committed_version: proposalResolution.committed_version,
       case_status: caseStatus,
       current_state: currentState,
-      next_state: CALL_STATES.CLOSE,
+      next_state: CALL_STATES.POST_DELIVERY_CONFIRM,
       speak_back:
         "Your payment agreement was already registered. Please use the secure link already sent.",
     };
@@ -2040,11 +2101,31 @@ export const createPaymentAgreementFromTool = async ({
 
   await updateInteractionCallStateFromTool({
     interaction,
-    nextState: CALL_STATES.CLOSE,
+    nextState: CALL_STATES.POST_DELIVERY_CONFIRM,
     action: CALL_ACTIONS.CALL_CREATE_PAYMENT_AGREEMENT,
     tool: "create-payment-agreement",
     toolOk: true,
     toolCode: null,
+    closingContext: "agreement_created",
+    facts: {
+      last_delivery_result: {
+        requested_channel: requestedChannel,
+        attempted_channels: deliveryChannels,
+        successful_channels: successfulDeliveries.map((d) => d.channel),
+        failed_channels: failedDeliveries.map((d) => ({
+          channel: d.channel,
+          reason: d.reason || null,
+        })),
+        email: effectiveDeliveryEmail || null,
+      },
+      last_committed_plan: {
+        plan_type: validation.planType,
+        upfront_amount_cents: validation.upfrontAmountCents,
+        installments_count: validation.installmentsCount || null,
+        delivery_channel: requestedChannel,
+        first_due_date: firstDueDate || null,
+      },
+    },
   });
   await createCallToolEvent({
     debtCaseId: debtCase.id,
@@ -2081,7 +2162,7 @@ export const createPaymentAgreementFromTool = async ({
     },
     case_status: caseStatus,
     current_state: currentState,
-    next_state: CALL_STATES.CLOSE,
+    next_state: CALL_STATES.POST_DELIVERY_CONFIRM,
     speak_back: speakBack,
   };
 };
@@ -2340,15 +2421,15 @@ export const createDisputeFromTool = async ({
     "Understood. I registered your dispute and paused negotiation while the team reviews your case.";
   if (shouldSendLink && sentByEmail && sentBySms) {
     speakBack = effectiveDeliveryEmail
-      ? `Understood. I registered your dispute and sent your secure case link to ${effectiveDeliveryEmail} and by SMS.`
-      : "Understood. I registered your dispute and sent your secure case link by email and SMS.";
+      ? `Understood. I registered your dispute and sent your secure case link to ${effectiveDeliveryEmail} and by SMS. Please confirm you received it.`
+      : "Understood. I registered your dispute and sent your secure case link by email and SMS. Please confirm you received it.";
   } else if (shouldSendLink && sentByEmail) {
     speakBack = effectiveDeliveryEmail
-      ? `Understood. I registered your dispute and sent your secure case link to ${effectiveDeliveryEmail}.`
-      : "Understood. I registered your dispute and sent your secure case link by email.";
+      ? `Understood. I registered your dispute and sent your secure case link to ${effectiveDeliveryEmail}. Please confirm you received it.`
+      : "Understood. I registered your dispute and sent your secure case link by email. Please confirm you received it.";
   } else if (shouldSendLink && sentBySms) {
     speakBack =
-      "Understood. I registered your dispute and sent your secure case link by SMS.";
+      "Understood. I registered your dispute and sent your secure case link by SMS. Please confirm you received it.";
   } else if (shouldSendLink && deliveryChannels.length === 0) {
     speakBack =
       "Understood. I registered your dispute, but I could not send a link because contact details are missing.";
@@ -2356,11 +2437,30 @@ export const createDisputeFromTool = async ({
 
   await updateInteractionCallStateFromTool({
     interaction,
-    nextState: CALL_STATES.CLOSE,
+    nextState: CALL_STATES.POST_DISPUTE_CONFIRM,
     action: CALL_ACTIONS.CALL_CREATE_DISPUTE,
     tool: "create-dispute",
     toolOk: true,
     toolCode: null,
+    closingContext: "dispute_registered",
+    facts: {
+      last_delivery_result: {
+        requested_channel: requestedChannel,
+        attempted_channels: shouldSendLink ? deliveryChannels : [],
+        successful_channels: successfulDeliveries.map((d) => d.channel),
+        failed_channels: failedDeliveries.map((d) => ({
+          channel: d.channel,
+          reason: d.reason || null,
+        })),
+        email: effectiveDeliveryEmail || null,
+      },
+      last_dispute_summary: {
+        dispute_id: dispute.id,
+        reason: dispute.reason,
+        notes: dispute.notes || null,
+        send_link: shouldSendLink,
+      },
+    },
   });
   await createCallToolEvent({
     debtCaseId: debtCase.id,
@@ -2398,7 +2498,7 @@ export const createDisputeFromTool = async ({
       })),
     },
     current_state: currentState,
-    next_state: CALL_STATES.CLOSE,
+    next_state: CALL_STATES.POST_DISPUTE_CONFIRM,
     speak_back: speakBack,
   };
 };

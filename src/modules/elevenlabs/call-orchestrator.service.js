@@ -156,6 +156,10 @@ const resolvePreviousCallState = (interaction) => {
     callState?.slots && typeof callState.slots === "object"
       ? callState.slots
       : {};
+  const previousFacts =
+    callState?.facts && typeof callState.facts === "object"
+      ? callState.facts
+      : {};
   const previousTelemetry =
     callState?.telemetry && typeof callState.telemetry === "object"
       ? callState.telemetry
@@ -174,6 +178,7 @@ const resolvePreviousCallState = (interaction) => {
   return {
     callState,
     previousSlots: { ...DEFAULT_CALL_SLOTS, ...previousSlots },
+    previousFacts,
     previousTelemetry: { ...DEFAULT_TELEMETRY, ...previousTelemetry },
     previousProposalSnapshot,
     previousProposalCommitted,
@@ -429,6 +434,7 @@ export const orchestrateCallStepFromTool = async ({
   const {
     callState: previousCallState,
     previousSlots,
+    previousFacts,
     previousTelemetry,
     previousProposalSnapshot,
     previousProposalCommitted,
@@ -474,6 +480,7 @@ export const orchestrateCallStepFromTool = async ({
       currency: debtCase.currency || "USD",
       planCatalog,
       allowedDeliveryChannels,
+      facts: previousFacts,
     },
   });
 
@@ -542,6 +549,14 @@ export const orchestrateCallStepFromTool = async ({
     reducer,
   });
 
+  const nextFacts = {
+    ...previousFacts,
+  };
+
+  if (reducer.intentLabel === "callback_requested") {
+    nextFacts.closing_context = "callback_requested";
+  }
+
   await interaction.update({
     aiData: {
       ...(interaction.aiData || {}),
@@ -570,6 +585,7 @@ export const orchestrateCallStepFromTool = async ({
           proposal_drafts: proposalDrafts,
           proposal_snapshot: proposalSnapshot,
           proposal_committed: proposalCommitted,
+          facts: nextFacts,
           telemetry,
           transition_count: telemetry.transition_count,
           updated_at: nowIso,
@@ -640,6 +656,7 @@ export const orchestrateCallStepFromTool = async ({
     proposal_drafts: proposalDrafts,
     proposal_snapshot: proposalSnapshot,
     proposal_committed: proposalCommitted,
+    facts: nextFacts,
     telemetry,
     policy: buildPolicyResponse({
       planCatalog,

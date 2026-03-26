@@ -13,6 +13,13 @@ export const CALL_DIALOG_ACTIONS = Object.freeze({
   REJECT_AGREEMENT: "REJECT_AGREEMENT",
   OPEN_DISPUTE: "OPEN_DISPUTE",
   PROVIDE_DISPUTE_REASON: "PROVIDE_DISPUTE_REASON",
+  ASK_BALANCE: "ASK_BALANCE",
+  ASK_OPTIONS: "ASK_OPTIONS",
+  ASK_PLAN_SUMMARY: "ASK_PLAN_SUMMARY",
+  ASK_LINK_DESTINATION: "ASK_LINK_DESTINATION",
+  ASK_LINK_CHANNEL: "ASK_LINK_CHANNEL",
+  CONFIRM_LINK_RECEIPT: "CONFIRM_LINK_RECEIPT",
+  REPORT_LINK_NOT_RECEIVED: "REPORT_LINK_NOT_RECEIVED",
   REQUEST_CALLBACK: "REQUEST_CALLBACK",
   END_CALL: "END_CALL",
 });
@@ -40,6 +47,13 @@ const ACTION_ALIAS_MAP = Object.freeze({
   open_dispute: CALL_DIALOG_ACTIONS.OPEN_DISPUTE,
   dispute_detected: CALL_DIALOG_ACTIONS.OPEN_DISPUTE,
   provide_dispute_reason: CALL_DIALOG_ACTIONS.PROVIDE_DISPUTE_REASON,
+  ask_balance: CALL_DIALOG_ACTIONS.ASK_BALANCE,
+  ask_options: CALL_DIALOG_ACTIONS.ASK_OPTIONS,
+  ask_plan_summary: CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY,
+  ask_link_destination: CALL_DIALOG_ACTIONS.ASK_LINK_DESTINATION,
+  ask_link_channel: CALL_DIALOG_ACTIONS.ASK_LINK_CHANNEL,
+  confirm_link_receipt: CALL_DIALOG_ACTIONS.CONFIRM_LINK_RECEIPT,
+  report_link_not_received: CALL_DIALOG_ACTIONS.REPORT_LINK_NOT_RECEIVED,
   request_callback: CALL_DIALOG_ACTIONS.REQUEST_CALLBACK,
   callback_requested: CALL_DIALOG_ACTIONS.REQUEST_CALLBACK,
   end_call: CALL_DIALOG_ACTIONS.END_CALL,
@@ -101,6 +115,82 @@ const looksNegative = (utterance) => {
     return true;
   }
   return false;
+};
+
+const looksQuestionAboutLinkDestination = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  return (
+    /\b(which|what|where)\b/.test(normalized) &&
+    /\b(email|mail|address)\b/.test(normalized) &&
+    /\b(send|sent)\b/.test(normalized)
+  );
+};
+
+const looksQuestionAboutLinkChannel = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  return (
+    /\b(how|which|what)\b/.test(normalized) &&
+    /\b(send|sent|delivered)\b/.test(normalized) &&
+    /\b(email|mail|sms|text|message)\b/.test(normalized)
+  );
+};
+
+const looksQuestionAboutBalance = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  return (
+    /\b(balance|owe|amount due|how much)\b/.test(normalized) &&
+    /\b(pay|owe|due|balance)\b/.test(normalized)
+  );
+};
+
+const looksQuestionAboutOptions = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  return (
+    /\b(options|plans|choices)\b/.test(normalized) ||
+    /\bwhat can i do\b/.test(normalized) ||
+    /\bhow can i pay\b/.test(normalized)
+  );
+};
+
+const looksQuestionAboutPlanSummary = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  return (
+    /\b(what did we|what we|which plan|what plan|agreed|agreement)\b/.test(
+      normalized,
+    ) || /\b(remind me)\b/.test(normalized)
+  );
+};
+
+const looksLinkReceiptConfirmed = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  return (
+    /\b(received|got it|i got it|i have it|arrived)\b/.test(normalized) ||
+    /\b(found it)\b/.test(normalized)
+  );
+};
+
+const looksLinkNotReceived = (utterance) => {
+  const normalized = normalizeUtterance(utterance);
+  if (!normalized) return false;
+
+  return (
+    /\b(didn't get it|did not get it|haven't received|have not received)\b/.test(
+      normalized,
+    ) ||
+    /\b(not received|not get|missing)\b/.test(normalized)
+  );
 };
 
 const resolveMappedAction = (candidate) => {
@@ -275,6 +365,77 @@ export const classifyCallAction = ({
         source: "utterance_heuristic",
       };
     }
+  }
+
+  if (
+    [
+      CALL_STATES.POST_DELIVERY_CONFIRM,
+      CALL_STATES.POST_DISPUTE_CONFIRM,
+    ].includes(state)
+  ) {
+    if (looksQuestionAboutLinkDestination(utterance)) {
+      return {
+        action: CALL_DIALOG_ACTIONS.ASK_LINK_DESTINATION,
+        confidence: 0.84,
+        source: "utterance_heuristic",
+      };
+    }
+
+    if (looksQuestionAboutLinkChannel(utterance)) {
+      return {
+        action: CALL_DIALOG_ACTIONS.ASK_LINK_CHANNEL,
+        confidence: 0.82,
+        source: "utterance_heuristic",
+      };
+    }
+
+    if (looksQuestionAboutPlanSummary(utterance)) {
+      return {
+        action: CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY,
+        confidence: 0.8,
+        source: "utterance_heuristic",
+      };
+    }
+
+    if (looksLinkNotReceived(utterance)) {
+      return {
+        action: CALL_DIALOG_ACTIONS.REPORT_LINK_NOT_RECEIVED,
+        confidence: 0.82,
+        source: "utterance_heuristic",
+      };
+    }
+
+    if (looksLinkReceiptConfirmed(utterance)) {
+      return {
+        action: CALL_DIALOG_ACTIONS.CONFIRM_LINK_RECEIPT,
+        confidence: 0.82,
+        source: "utterance_heuristic",
+      };
+    }
+  }
+
+  if (looksQuestionAboutBalance(utterance)) {
+    return {
+      action: CALL_DIALOG_ACTIONS.ASK_BALANCE,
+      confidence: 0.78,
+      source: "utterance_heuristic",
+    };
+  }
+
+  if (looksQuestionAboutOptions(utterance)) {
+    return {
+      action: CALL_DIALOG_ACTIONS.ASK_OPTIONS,
+      confidence: 0.78,
+      source: "utterance_heuristic",
+    };
+  }
+
+  if (looksQuestionAboutPlanSummary(utterance)) {
+    return {
+      action: CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY,
+      confidence: 0.76,
+      source: "utterance_heuristic",
+    };
   }
 
   if (entities?.plan_type || entities?.planType) {
