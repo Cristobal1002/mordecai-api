@@ -1065,6 +1065,12 @@ export const getCallStateSnapshot = async ({
       callState?.facts && typeof callState.facts === "object"
         ? callState.facts
         : null,
+    state_stack: Array.isArray(callState?.state_stack)
+      ? callState.state_stack
+      : [],
+    return_state: normalizeCallState(callState?.return_state) || null,
+    interruption_topic:
+      String(callState?.interruption_topic || "").trim() || null,
     telemetry: callState?.telemetry || null,
   };
 };

@@ -204,6 +204,146 @@ const buildOptionsAnswer = ({ planCatalog, state }) => {
   return `Your available options are ${options}.${followUp}`;
 };
 
+const buildResumePrompt = ({
+  returnState,
+  debtorName,
+  slots,
+  planCatalog,
+  balanceCents,
+  currency,
+  allowedDeliveryChannels,
+  facts,
+}) => {
+  const deliveryFacts = normalizeFacts(facts.last_delivery_result);
+  const disputeSummary = normalizeFacts(facts.last_dispute_summary);
+
+  if (!returnState) {
+    return "Let's continue.";
+  }
+
+  switch (returnState) {
+    case CALL_STATES.VERIFY_IDENTITY:
+      return `For privacy, am I speaking with ${debtorName}?`;
+    case CALL_STATES.DISCLOSE_DEBT:
+    case CALL_STATES.PLAN_SELECTION:
+      return "Which option works best for you?";
+    case CALL_STATES.CAPTURE_UPFRONT: {
+      const plan =
+        planCatalog?.plansByCode?.[String(slots?.plan_type || "").toUpperCase()];
+      const minPct = Number(plan?.minUpfrontPct || 0);
+      const minUpfrontAmount = Math.ceil(
+        (Math.max(0, minPct) / 100) * Number(balanceCents || 0),
+      );
+      return minUpfrontAmount > 0
+        ? `Now, please confirm your upfront amount. Minimum is ${toDisplayAmount(minUpfrontAmount)} ${currency}.`
+        : "Now, please confirm your upfront payment amount.";
+    }
+    case CALL_STATES.CAPTURE_INSTALLMENTS: {
+      const plan =
+        planCatalog?.plansByCode?.[String(slots?.plan_type || "").toUpperCase()];
+      const maxInstallments = Number(
+        plan?.maxInstallments || planCatalog?.maxInstallments || 4,
+      );
+      return `Now, how many installments do you prefer? Maximum is ${maxInstallments}.`;
+    }
+    case CALL_STATES.CAPTURE_DELIVERY_CHANNEL:
+      return `Now, please choose a delivery channel: ${buildDeliveryOptionsText(
+        allowedDeliveryChannels,
+      )}.`;
+    case CALL_STATES.CONFIRM_AGREEMENT:
+      return `${buildAgreementSummary({
+        slots,
+        planCatalog,
+        currency,
+        facts,
+      })} Please confirm if you want me to create the payment agreement now.`;
+    case CALL_STATES.DISPUTE_CAPTURE:
+      if (!slots?.dispute_reason) {
+        return "Now, please share the main reason for the dispute.";
+      }
+      if (!slots?.delivery_channel) {
+        return `Now, which delivery channel should we use: ${buildDeliveryOptionsText(
+          allowedDeliveryChannels,
+        )}?`;
+      }
+      return "Now, would you like me to register the dispute?";
+    case CALL_STATES.POST_DELIVERY_CONFIRM:
+      return buildPostDeliveryPrompt({ deliveryFacts });
+    case CALL_STATES.POST_DISPUTE_CONFIRM:
+      if (disputeSummary.reason) {
+        return `I registered your dispute and ${buildPostDisputePrompt({
+          deliveryFacts,
+        }).charAt(0).toLowerCase()}${buildPostDisputePrompt({
+          deliveryFacts,
+        }).slice(1)}`;
+      }
+      return buildPostDisputePrompt({ deliveryFacts });
+    default:
+      return "Let's continue.";
+  }
+};
+
+const buildInterruptionAnswer = ({
+  action,
+  returnState,
+  facts,
+  balanceAmount,
+  currency,
+  planCatalog,
+  slots,
+}) => {
+  const deliveryFacts = normalizeFacts(facts.last_delivery_result);
+  const disputeSummary = normalizeFacts(facts.last_dispute_summary);
+
+  if (
+    returnState === CALL_STATES.VERIFY_IDENTITY &&
+    [
+      CALL_DIALOG_ACTIONS.ASK_BALANCE,
+      CALL_DIALOG_ACTIONS.ASK_OPTIONS,
+      CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY,
+    ].includes(action)
+  ) {
+    return "For privacy, I can discuss account details after identity verification.";
+  }
+
+  switch (action) {
+    case CALL_DIALOG_ACTIONS.ASK_BALANCE:
+      return `Your current balance is ${balanceAmount} ${currency}.`;
+    case CALL_DIALOG_ACTIONS.ASK_OPTIONS:
+      return `Your available options are ${humanizeAllowedPlans(planCatalog)}.`;
+    case CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY:
+      if (
+        [CALL_STATES.DISPUTE_CAPTURE, CALL_STATES.POST_DISPUTE_CONFIRM].includes(
+          returnState,
+        ) &&
+        disputeSummary.reason
+      ) {
+        return `I have your dispute recorded with reason ${String(
+          disputeSummary.reason,
+        )
+          .toLowerCase()
+          .replace(/_/g, " ")}.`;
+      }
+      return buildAgreementSummary({
+        slots,
+        planCatalog,
+        currency,
+        facts,
+      });
+    case CALL_DIALOG_ACTIONS.ASK_LINK_DESTINATION:
+    case CALL_DIALOG_ACTIONS.ASK_LINK_CHANNEL:
+      return buildSentBySummary(deliveryFacts);
+    case CALL_DIALOG_ACTIONS.CONFIRM_LINK_RECEIPT:
+      return "Thank you for confirming that you received it.";
+    case CALL_DIALOG_ACTIONS.REPORT_LINK_NOT_RECEIVED:
+      return `${buildSentBySummary(
+        deliveryFacts,
+      )} Please check your inbox, spam folder, or messages.`;
+    default:
+      return "I can clarify your balance, payment options, agreement summary, or where the link was sent.";
+  }
+};
+
 const withBaseResult = (state) => ({
   nextState: state,
   toolAction: CALL_ACTIONS.NONE,
@@ -230,6 +370,7 @@ export const reduceCallState = ({ state, action, slots, context }) => {
     ? context.allowedDeliveryChannels
     : [];
   const facts = normalizeFacts(context?.facts);
+  const returnState = context?.returnState || null;
   const lastDeliveryResult = normalizeFacts(facts.last_delivery_result);
   const lastDisputeSummary = normalizeFacts(facts.last_dispute_summary);
 
@@ -261,6 +402,30 @@ export const reduceCallState = ({ state, action, slots, context }) => {
     result.toolAction = CALL_ACTIONS.END_CALL;
     result.speakBack = buildClosingMessage({ tenantName, facts });
     result.intentLabel = "already_closed";
+    return result;
+  }
+
+  if (state === CALL_STATES.INTERRUPTION) {
+    result.nextState = CALL_STATES.INTERRUPTION;
+    result.speakBack = `${buildInterruptionAnswer({
+      action,
+      returnState,
+      facts,
+      balanceAmount,
+      currency,
+      planCatalog,
+      slots,
+    })} ${buildResumePrompt({
+      returnState,
+      debtorName,
+      slots,
+      planCatalog,
+      balanceCents: context?.balanceCents,
+      currency,
+      allowedDeliveryChannels,
+      facts,
+    })}`;
+    result.intentLabel = "interruption_answered";
     return result;
   }
 
