@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { ForbiddenError } from '../../errors/index.js';
 import {
   DebtCase,
@@ -8,14 +9,20 @@ import {
 } from '../../models/index.js';
 import { getAuthIdentity } from '../../utils/auth-identity.js';
 import { createVoiceContextSignature } from '../twilio/calls/context-signature.js';
-import { sendCollectionSms } from '../twilio/sms/twilio.sms.service.js';
-import { sendCollectionEmail } from '../email/ses/ses.email.service.js';
+import { sendTwilioSms } from '../twilio/sms/twilio.sms.client.js';
+import { buildConciseLinkSmsBody } from '../twilio/sms/twilio.sms.template.js';
+import { sendSesEmail } from '../email/ses/ses.email.client.js';
+import { renderElevenLinkEmail } from '../email/ses/ses.email.template.js';
+import { getOrCreatePaymentLinkUrl } from '../pay/payment-link-resolver.service.js';
 
 const DEFAULT_RULES = {
   min_upfront_pct: 25,
   half_pct: 50,
   max_installments: 4,
 };
+
+const DEFAULT_ALLOWED_PLANS = ['full', 'half', 'installments_4'];
+const DEFAULT_ALLOWED_PAYMENT_CHANNELS = ['link', 'card'];
 
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
@@ -37,6 +44,287 @@ const normalizePhone = (value) => String(value || '').replace(/[^\d+]/g, '');
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 const isValidEmail = (value) =>
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+
+const buildDemoInteractionLog = async ({
+  tenantId,
+  debtCaseId,
+  debtorId,
+  type,
+  status = 'queued',
+  providerRef = null,
+  summary = null,
+  outcome = null,
+  error = null,
+  aiData = {},
+}) =>
+  InteractionLog.create({
+    tenantId,
+    debtCaseId,
+    debtorId,
+    type,
+    direction: 'OUTBOUND',
+    channelProvider: type === 'SMS' ? 'twilio' : 'ses',
+    status,
+    providerRef,
+    summary,
+    outcome,
+    error,
+    startedAt: new Date(),
+    endedAt: ['sent', 'failed'].includes(String(status || '').toLowerCase())
+      ? new Date()
+      : null,
+    aiData,
+  });
+
+const normalizeDemoPlanCodes = (options = []) => {
+  const normalized = Array.isArray(options)
+    ? options
+        .map((item) => String(item || '').trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+
+  return normalized.length > 0 ? normalized : DEFAULT_ALLOWED_PLANS;
+};
+
+const normalizeDemoPaymentChannels = (channels = []) => {
+  const normalized = Array.isArray(channels)
+    ? channels
+        .map((item) => String(item || '').trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+
+  return normalized.length > 0 ? normalized : DEFAULT_ALLOWED_PAYMENT_CHANNELS;
+};
+
+const buildDemoFlowPolicyRules = (input, baseRules = {}) => ({
+  ...DEFAULT_RULES,
+  ...(baseRules || {}),
+  allowed_plans: normalizeDemoPlanCodes(input.options),
+  payment_channels: normalizeDemoPaymentChannels(input.channels),
+  opening_message: input.openingMessage || '',
+  tenant_display_name: input.tenantDisplayName || '',
+});
+
+const buildDemoFlowPolicyName = ({ basePolicy, input }) => {
+  const fingerprint = crypto
+    .createHash('sha1')
+    .update(
+      JSON.stringify({
+        min: basePolicy?.minDaysPastDue ?? null,
+        max: basePolicy?.maxDaysPastDue ?? null,
+        tone: basePolicy?.tone ?? 'professional',
+        options: normalizeDemoPlanCodes(input.options),
+        channels: normalizeDemoPaymentChannels(input.channels),
+        openingMessage: input.openingMessage || '',
+        tenantDisplayName: input.tenantDisplayName || '',
+      })
+    )
+    .digest('hex')
+    .slice(0, 10);
+
+  return `Demo runtime policy ${fingerprint}`.slice(0, 120);
+};
+
+const resolveDemoFlowPolicy = async ({ tenantId, basePolicy, input }) => {
+  const runtimeName = buildDemoFlowPolicyName({ basePolicy, input });
+  const existing = await FlowPolicy.findOne({
+    where: {
+      tenantId,
+      name: runtimeName,
+      minDaysPastDue: basePolicy.minDaysPastDue,
+      maxDaysPastDue: basePolicy.maxDaysPastDue,
+    },
+  });
+
+  if (existing) return existing;
+
+  return FlowPolicy.create({
+    tenantId,
+    name: runtimeName,
+    minDaysPastDue: basePolicy.minDaysPastDue,
+    maxDaysPastDue: basePolicy.maxDaysPastDue,
+    channels: basePolicy.channels || buildChannels(),
+    tone: basePolicy.tone || 'professional',
+    rules: buildDemoFlowPolicyRules(input, basePolicy.rules || {}),
+    isActive: true,
+  });
+};
+
+const sendDemoLinkSms = async ({ tenant, debtor, debtCase }) => {
+  const to = String(debtor?.phone || '').trim();
+  if (!to) {
+    return {
+      ok: false,
+      channel: 'sms',
+      outcome: 'sms_invalid_contact',
+      message: 'Debtor phone is missing.',
+    };
+  }
+
+  const paymentLinkUrl = await getOrCreatePaymentLinkUrl({
+    tenantId: tenant.id,
+    debtCaseId: debtCase.id,
+    includeAttribution: false,
+  });
+
+  const body = buildConciseLinkSmsBody({
+    debtorName: debtor?.fullName,
+    tenantName:
+      String(
+        debtCase?.meta?.tenant_display_name ||
+          debtCase?.meta?.tenant_name ||
+          tenant?.name ||
+          'Collections'
+      ).trim() || 'Collections',
+    paymentLink: paymentLinkUrl,
+  });
+
+  try {
+    const provider = await sendTwilioSms({ to, body });
+    const interaction = await buildDemoInteractionLog({
+      tenantId: tenant.id,
+      debtCaseId: debtCase.id,
+      debtorId: debtor.id,
+      type: 'SMS',
+      status: 'sent',
+      providerRef: provider.messageSid,
+      summary: body,
+      aiData: {
+        source: 'demo-ui',
+        context: 'demo_link_delivery',
+        payment_link_url: paymentLinkUrl,
+      },
+    });
+
+    return {
+      ok: true,
+      channel: 'sms',
+      outcome: 'sms_sent',
+      interactionLogId: interaction.id,
+      providerRef: provider.messageSid,
+    };
+  } catch (error) {
+    await buildDemoInteractionLog({
+      tenantId: tenant.id,
+      debtCaseId: debtCase.id,
+      debtorId: debtor.id,
+      type: 'SMS',
+      status: 'failed',
+      summary: 'Demo SMS delivery failed',
+      outcome: 'FAILED',
+      error: {
+        message: error?.message || 'Demo SMS dispatch failed',
+      },
+      aiData: {
+        source: 'demo-ui',
+        context: 'demo_link_delivery',
+      },
+    });
+
+    return {
+      ok: false,
+      channel: 'sms',
+      outcome: 'sms_failed',
+      message: error?.message || 'Demo SMS dispatch failed',
+    };
+  }
+};
+
+const sendDemoLinkEmail = async ({ tenant, debtor, debtCase }) => {
+  const to = normalizeEmail(debtor?.email);
+  if (!to || !isValidEmail(to)) {
+    return {
+      ok: false,
+      channel: 'email',
+      outcome: 'email_invalid_contact',
+      message: 'Debtor email is missing.',
+    };
+  }
+
+  const paymentLinkUrl = await getOrCreatePaymentLinkUrl({
+    tenantId: tenant.id,
+    debtCaseId: debtCase.id,
+  });
+
+  const rendered = renderElevenLinkEmail({
+    context: 'agreement',
+    debtorName: debtor?.fullName || 'there',
+    tenantName:
+      String(
+        debtCase?.meta?.tenant_display_name ||
+          debtCase?.meta?.tenant_name ||
+          tenant?.name ||
+          'Collections'
+      ).trim() || 'Collections',
+    paymentLinkUrl,
+  });
+
+  try {
+    const provider = await sendSesEmail({
+      to,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      tags: [
+        { name: 'tenant_id', value: String(tenant.id) },
+        { name: 'debt_case_id', value: String(debtCase.id) },
+        { name: 'channel', value: 'email' },
+        { name: 'source', value: 'demo-ui' },
+      ],
+    });
+
+    const interaction = await buildDemoInteractionLog({
+      tenantId: tenant.id,
+      debtCaseId: debtCase.id,
+      debtorId: debtor.id,
+      type: 'EMAIL',
+      status: 'sent',
+      providerRef: provider.messageId,
+      summary: rendered.text.slice(0, 500),
+      aiData: {
+        source: 'demo-ui',
+        context: 'demo_link_delivery',
+        payment_link_url: paymentLinkUrl,
+        email: {
+          template: rendered.templateName,
+          subject: rendered.subject,
+        },
+      },
+    });
+
+    return {
+      ok: true,
+      channel: 'email',
+      outcome: 'email_sent',
+      interactionLogId: interaction.id,
+      providerRef: provider.messageId,
+    };
+  } catch (error) {
+    await buildDemoInteractionLog({
+      tenantId: tenant.id,
+      debtCaseId: debtCase.id,
+      debtorId: debtor.id,
+      type: 'EMAIL',
+      status: 'failed',
+      summary: 'Demo email delivery failed',
+      outcome: 'FAILED',
+      error: {
+        message: error?.message || 'Demo email dispatch failed',
+      },
+      aiData: {
+        source: 'demo-ui',
+        context: 'demo_link_delivery',
+      },
+    });
+
+    return {
+      ok: false,
+      channel: 'email',
+      outcome: 'email_failed',
+      message: error?.message || 'Demo email dispatch failed',
+    };
+  }
+};
 
 const getTwilioConfig = () => {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -257,15 +545,21 @@ const buildDemoCaseContext = async (input) => {
   const tenant = await resolveDemoTenant();
   const effectiveTenantDisplayName = input.tenantDisplayName || tenant.name;
   const flowPolicies = await ensureFlowPolicies(tenant.id);
-  const flowPolicy = selectFlowPolicy(flowPolicies, input.daysPastDue);
+  const baseFlowPolicy = selectFlowPolicy(flowPolicies, input.daysPastDue);
 
-  if (!flowPolicy) {
+  if (!baseFlowPolicy) {
     return {
       ok: false,
       status: 500,
       message: 'Could not resolve a flow policy for demo interaction.',
     };
   }
+
+  const flowPolicy = await resolveDemoFlowPolicy({
+    tenantId: tenant.id,
+    basePolicy: baseFlowPolicy,
+    input,
+  });
 
   const [debtor] = await Debtor.findOrCreate({
     where: { tenantId: tenant.id, phone: input.phone },
@@ -415,17 +709,10 @@ export const startDemoSms = async (payload) => {
 
   const { tenant, debtor, debtCase } = context;
 
-  const smsResult = await sendCollectionSms({
-    tenantId: tenant.id,
-    automationId: null,
-    state: {
-      debtCaseId: debtCase.id,
-      debtorId: debtor.id,
-    },
-    debtCase,
-    debtor,
-    stage: null,
+  const smsResult = await sendDemoLinkSms({
     tenant,
+    debtor,
+    debtCase,
   });
 
   if (!smsResult?.ok) {
@@ -473,16 +760,10 @@ export const startDemoEmail = async (payload) => {
   }
 
   const { tenant, debtor, debtCase } = context;
-  const emailResult = await sendCollectionEmail({
-    tenantId: tenant.id,
-    automationId: null,
-    state: {
-      debtCaseId: debtCase.id,
-      debtorId: debtor.id,
-    },
-    debtCase,
+  const emailResult = await sendDemoLinkEmail({
+    tenant,
     debtor,
-    stage: null,
+    debtCase,
   });
 
   if (!emailResult?.ok) {
