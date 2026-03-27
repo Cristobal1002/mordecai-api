@@ -2,6 +2,7 @@ import { caseRepository } from './case.repository.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { NotFoundError, BadRequestError } from '../../errors/index.js';
 import { addCallCaseJob, getCaseActionsQueue } from '../../queues/case-actions.queue.js';
+import { expireStaleCallInteractionsForDebtCase } from '../elevenlabs/eleven.service.js';
 
 export const caseService = {
   getDetail: async (tenantId, debtCaseId) => {
@@ -129,6 +130,8 @@ export const caseService = {
     if (!debtor?.phone) {
       throw new BadRequestError('Case has no phone number. Add a phone to the debtor to place a call.');
     }
+
+    await expireStaleCallInteractionsForDebtCase(tenantId, debtCaseId);
 
     const jobId = await addCallCaseJob(tenantId, debtCaseId);
     if (!jobId) {

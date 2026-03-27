@@ -11,6 +11,7 @@ import { resolveChannelTemplate } from '../templates/template-resolution.service
 import { NotFoundError, ConflictError } from '../../errors/index.js';
 import { logger } from '../../utils/logger.js';
 import { resolveApprovalStatus } from '../cases/approval-resolver.service.js';
+import { expireStaleCallInteractionsForDebtCase } from '../elevenlabs/eleven.service.js';
 
 const ELIGIBLE_STATUSES = ['NEW', 'IN_PROGRESS', 'CONTACTED', 'PROMISE_TO_PAY', 'PAYMENT_PLAN', 'NO_ANSWER', 'REFUSED'];
 
@@ -901,6 +902,8 @@ export const automationService = {
         queued: [],
       };
     }
+
+    await expireStaleCallInteractionsForDebtCase(tenantId, debtCaseId);
 
     const now = new Date();
     const outcomes = [];

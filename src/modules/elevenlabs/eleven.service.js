@@ -673,6 +673,60 @@ const closeStaleCallInteraction = async (
   return interaction;
 };
 
+/**
+ * Closes stale queued/in_progress CALL rows for a debt case (TTL via CALL_STALE_TTL_SECONDS).
+ * Call before enqueueing a new call so old stuck rows do not block workers/UI.
+ */
+export const expireStaleCallInteractionsForDebtCase = async (
+  tenantId,
+  debtCaseId,
+) => {
+  const rows = await InteractionLog.findAll({
+    where: {
+      tenantId,
+      debtCaseId,
+      type: "CALL",
+      status: { [Op.in]: ["queued", "in_progress"] },
+    },
+    include: [{ model: DebtCase, as: "debtCase" }],
+    order: [["createdAt", "DESC"]],
+    limit: 25,
+  });
+  for (const row of rows) {
+    await closeStaleCallInteraction(row, "stale_before_new_call_attempt");
+  }
+};
+
+const markInteractionFailedOnRegisterError = async (interaction, err) => {
+  try {
+    await interaction.reload();
+  } catch (_e) {
+    return;
+  }
+  const st = String(interaction.status || "").toLowerCase();
+  // Only fix rows still in "queued". If already "in_progress", Twilio may be retrying the webhook;
+  // do not clobber a successful first leg.
+  if (st !== "queued") return;
+  const message = err?.message || String(err);
+  await interaction.update({
+    status: "failed",
+    outcome: "FAILED",
+    endedAt: new Date(),
+    error: {
+      message,
+      phase: "register_call_for_interaction",
+    },
+  });
+  logger.warn(
+    {
+      interactionId: interaction.id,
+      debtCaseId: interaction.debtCaseId,
+      message,
+    },
+    "Marked interaction failed after register-call error",
+  );
+};
+
 const resolveToolInteractionContext = async ({
   tenantId,
   caseId,
@@ -1409,6 +1463,29 @@ export const registerCallForInteraction = async ({
     throw new Error(`Interaction log not found for id=${interactionId}`);
   }
 
+  try {
+    return await executeRegisterCallForInteraction({
+      interaction,
+      interactionId,
+      twilioCallSid,
+      twilioFrom,
+      twilioTo,
+      extraDynamicVariables,
+    });
+  } catch (err) {
+    await markInteractionFailedOnRegisterError(interaction, err);
+    throw err;
+  }
+};
+
+const executeRegisterCallForInteraction = async ({
+  interaction,
+  interactionId,
+  twilioCallSid,
+  twilioFrom,
+  twilioTo,
+  extraDynamicVariables = {},
+}) => {
   const debtCase = interaction.debtCase;
   const debtor = debtCase?.debtor;
   if (!debtCase || !debtor) {
