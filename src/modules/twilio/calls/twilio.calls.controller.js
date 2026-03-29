@@ -1,5 +1,6 @@
 import { config } from '../../../config/index.js';
 import { logger } from '../../../utils/logger.js';
+import { InteractionLog } from '../../../models/index.js';
 import { verifyVoiceContextSignature } from './context-signature.js';
 import {
   registerCallForInteraction,
@@ -100,7 +101,72 @@ const handleElevenRegisterVoice = async (req, res) => {
   return res.status(200).send(twiml);
 };
 
+/**
+ * Twilio status callback for outbound/inbound voice legs. Set StatusCallback on the Calls API
+ * resource to: POST {TWILIO_WEBHOOK_BASE_URL}/api/v1/twilio/voice/status
+ * so terminal failures (busy, no-answer, etc.) update interaction_logs instead of staying in_progress.
+ */
+const handleVoiceStatusCallback = async (req, res) => {
+  try {
+    const CallSid = req.body?.CallSid || req.query?.CallSid;
+    const rawStatus = req.body?.CallStatus || req.query?.CallStatus;
+    const CallStatus = rawStatus ? String(rawStatus).toLowerCase() : '';
+    if (!CallSid || !CallStatus) {
+      return res.status(200).end();
+    }
+
+    const interaction = await InteractionLog.findOne({
+      where: { providerRef: CallSid, type: 'CALL' },
+    });
+    if (!interaction) {
+      logger.warn({ CallSid }, 'Twilio voice status: no interaction_logs row for CallSid');
+      return res.status(200).end();
+    }
+
+    const st = String(interaction.status || '').toLowerCase();
+    if (st === 'completed' || st === 'failed') {
+      return res.status(200).end();
+    }
+
+    if (CallStatus === 'completed') {
+      await interaction.update({
+        status: 'completed',
+        endedAt: interaction.endedAt || new Date(),
+      });
+      logger.info(
+        { CallSid, interactionId: interaction.id },
+        'Twilio voice status: call leg completed',
+      );
+      return res.status(200).end();
+    }
+
+    const terminalFailed = new Set(['busy', 'failed', 'no-answer', 'canceled', 'cancelled']);
+    if (terminalFailed.has(CallStatus)) {
+      await interaction.update({
+        status: 'failed',
+        outcome: CallStatus === 'no-answer' ? 'NO_ANSWER' : 'FAILED',
+        endedAt: new Date(),
+        error: {
+          twilioCallStatus: rawStatus,
+          source: 'twilio_voice_status_callback',
+        },
+      });
+      logger.info(
+        { CallSid, interactionId: interaction.id, CallStatus: rawStatus },
+        'Twilio voice status: call leg ended with failure status',
+      );
+    }
+
+    return res.status(200).end();
+  } catch (error) {
+    logger.error({ error }, 'Twilio voice status callback failed');
+    return res.status(500).end();
+  }
+};
+
 export const twilioCallsController = {
+  voiceStatus: handleVoiceStatusCallback,
+
   voice: async (req, res, next) => {
     try {
       const engine = (process.env.TWILIO_ENGINE || 'realtime').toLowerCase();

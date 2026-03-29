@@ -22,6 +22,28 @@ import { automationService } from '../src/modules/automations/automation.service
 
 const DEFAULT_AUTOMATION_ID = '89727e95-9728-4f27-9f49-13744ca1e8da';
 
+/** Demo profile — edit here before running. amountDueCents = dollars * 100 (e.g. $3,500 → 350000). */
+const DEMO = {
+  debtor: {
+    fullName: 'Cristobal Sosa',
+    email: 'cristobal1002@gmail.com',
+    phone: '+573165121606',
+  },
+  case: {
+    /** USD 3,500.00 */
+    amountDueCents: 350_000,
+    currency: 'USD',
+    /** Ajusta si quieres otra mora / vencimiento para el demo */
+    daysPastDue: 15,
+    meta: {
+      notes: 'Demo seed — automation',
+      lease_id: '001',
+      unit_number: '210',
+      balance_type: 'rent',
+    },
+  },
+};
+
 async function main() {
   const automationId = process.argv[2] || DEFAULT_AUTOMATION_ID;
 
@@ -40,11 +62,14 @@ async function main() {
     order: [['createdAt', 'ASC']],
   });
 
+  const due = new Date();
+  due.setDate(due.getDate() - DEMO.case.daysPastDue);
+
   const debtor = await Debtor.create({
     tenantId,
-    fullName: 'Demo Debtor ' + Date.now().toString(36),
-    email: `demo.${Date.now()}@example.com`,
-    phone: '+15550000000',
+    fullName: DEMO.debtor.fullName,
+    email: DEMO.debtor.email,
+    phone: DEMO.debtor.phone,
     metadata: { notes: 'Synthetic demo debtor for automation testing' },
   });
 
@@ -52,18 +77,13 @@ async function main() {
     tenantId,
     debtorId: debtor.id,
     flowPolicyId: flowPolicy?.id ?? null,
-    amountDueCents: 50000, // $500
-    currency: 'USD',
-    daysPastDue: 12,
-    dueDate: new Date().toISOString().slice(0, 10),
+    amountDueCents: DEMO.case.amountDueCents,
+    currency: DEMO.case.currency,
+    daysPastDue: DEMO.case.daysPastDue,
+    dueDate: due.toISOString().slice(0, 10),
     status: 'NEW',
     approvalStatus: 'APPROVED',
-    meta: {
-      notes: 'Synthetic demo case for automation',
-      lease_id: 'LEASE-DEMO-001',
-      unit_number: '101',
-      balance_type: 'rent',
-    },
+    meta: DEMO.case.meta,
   });
 
   const { enrolled, skipped, total } = await automationService.enroll(tenantId, automationId, {

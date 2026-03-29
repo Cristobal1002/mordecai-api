@@ -117,23 +117,27 @@ export const buildCollectionSmsBody = ({
     tenant_name: tenantName || '',
     debtor_name: debtorName || 'there',
     payment_link: paymentLink || '',
+    link: paymentLink || '',
   };
+
+  const paymentLinkTrimmed = String(vars.payment_link || '').trim();
 
   const renderedCustom = renderTemplate(customTemplate, vars);
   if (renderedCustom) {
-    const compactCustom = trimToMaxLength(renderedCustom, DEFAULT_MAX_SMS_LENGTH);
-    const customMeta = estimateSmsTransportMeta(compactCustom);
-    const hasRequiredLink = !vars.payment_link || compactCustom.includes(vars.payment_link);
+    const body = renderedCustom.trim();
 
-    if (customMeta.segments <= 1 && hasRequiredLink) {
-      return compactCustom;
+    // Use the stage template whenever it actually contains the URL we resolved.
+    // Do NOT trim to 140 chars before this check — that used to truncate long templates and
+    // strip part of the URL, so includes(paymentLink) failed and we fell back to English "Hi … Link:".
+    if (paymentLinkTrimmed && body.includes(paymentLinkTrimmed)) {
+      return body;
     }
   }
 
   return buildConciseLinkSmsBody({
     debtorName: vars.debtor_name,
     tenantName: vars.tenant_name,
-    paymentLink: vars.payment_link,
+    paymentLink: paymentLinkTrimmed,
   });
 };
 

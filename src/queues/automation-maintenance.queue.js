@@ -5,6 +5,7 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { logger } from '../utils/logger.js';
+import { withBullmqPrefix } from './bullmq-queue-options.js';
 
 export const AUTOMATION_MAINTENANCE_QUEUE_NAME = 'automation-maintenance';
 
@@ -24,6 +25,9 @@ export function getAutomationMaintenanceQueue() {
   if (queue) return queue;
   const conn = getConnection();
   if (!conn) return null;
-  queue = new Queue(AUTOMATION_MAINTENANCE_QUEUE_NAME, { connection: conn });
+  queue = new Queue(
+    AUTOMATION_MAINTENANCE_QUEUE_NAME,
+    withBullmqPrefix({ connection: conn })
+  );
   return queue;
 }

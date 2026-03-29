@@ -4,7 +4,10 @@
  * Skips connection if lock cannot be acquired.
  */
 import { PmsConnection } from '../../models/index.js';
-import { runSync } from '../property-managers/sync/sync-runner.service.js';
+import {
+  PMS_SYNC_ALREADY_IN_PROGRESS,
+  runSync,
+} from '../property-managers/sync/sync-runner.service.js';
 import { acquireLock, releaseLock } from '../../utils/pms-sync-lock.js';
 import { logger } from '../../utils/logger.js';
 
@@ -27,6 +30,13 @@ export async function runDailyFullSyncForConnection(tenantId, connectionId) {
     });
     return { skipped: false };
   } catch (err) {
+    if (err?.code === PMS_SYNC_ALREADY_IN_PROGRESS) {
+      logger.info(
+        { tenantId, connectionId, activeRunId: err.activeRunId },
+        'Daily full sync: skip (sync already active in DB)'
+      );
+      return { skipped: true, reason: 'sync_already_running' };
+    }
     logger.error({ err, tenantId, connectionId }, 'Daily full sync: failed');
     throw err;
   } finally {

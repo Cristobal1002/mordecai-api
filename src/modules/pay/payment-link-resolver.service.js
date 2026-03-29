@@ -5,14 +5,26 @@
  * URLs use short_token (8 chars) when available to save SMS characters, e.g. /p/abc12XyZ
  *
  * For channel attribution (SMS vs Email link clicks), pass source and automationId.
- * By default the URL includes ?source=sms|email&aid=automationId so pay.mordecai.ai can
+ * By default the URL includes ?source=sms|email&aid=automationId so the frontend can
  * attribute clicks. Callers may disable attribution for SMS deliverability-sensitive flows.
+ *
+ * Base URL resolution: PAYMENTS_BASE_URL → else FRONTEND_APP_URL (same host as /p/*) →
+ * else in non-production http://localhost:3000. In production, set PAYMENTS_BASE_URL or FRONTEND_APP_URL.
+ *
+ * SMS: do not point this at Twilio's shortening host (e.g. secure.*). Put the real app URL here;
+ * with TWILIO_SMS_SHORTEN_URLS + Messaging Service, Twilio rewrites links in the message body.
  */
 import crypto from 'crypto';
 import { Op } from 'sequelize';
 import { PaymentLink } from '../../models/index.js';
 
-const PAYMENTS_BASE_URL = (process.env.PAYMENTS_BASE_URL || 'https://pay.mordecai.ai').replace(/\/$/, '');
+function resolvePaymentsBaseUrl() {
+  const raw =
+    process.env.PAYMENTS_BASE_URL?.trim() ||
+    process.env.FRONTEND_APP_URL?.trim() ||
+    (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000');
+  return raw.replace(/\/$/, '');
+}
 const DEFAULT_EXPIRY_HOURS = 72;
 const SHORT_TOKEN_LENGTH = 8;
 const SHORT_TOKEN_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -44,7 +56,7 @@ async function ensureShortToken(link) {
 
 /**
  * Append attribution params for channel tracking (?source=sms|email&aid=automationId).
- * Callers use this when sending links so we can attribute clicks on pay.mordecai.ai.
+ * Callers use this when sending links so we can attribute clicks on the pay portal host.
  * @param {string} baseUrl
  * @param {string} [source] - 'sms' | 'email'
  * @param {string} [automationId] - UUID for Activity attribution
@@ -74,7 +86,7 @@ export function appendPaymentLinkAttribution(baseUrl, source, automationId) {
  * @param {string} [opts.source] - 'sms' | 'email' for click attribution
  * @param {string} [opts.automationId] - Automation UUID for Activity attribution
  * @param {boolean} [opts.includeAttribution=true] - Append source/aid params to the URL
- * @returns {Promise<string>} Full URL e.g. https://pay.mordecai.ai/p/{token}
+ * @returns {Promise<string>} Full URL e.g. https://your-frontend.example.com/p/{token}
  */
 export async function getOrCreatePaymentLinkUrl({
   tenantId,
@@ -120,7 +132,14 @@ export async function getOrCreatePaymentLinkUrl({
     urlToken = shortToken;
   }
 
-  const baseUrl = `${PAYMENTS_BASE_URL}/p/${urlToken}`;
+  const paymentsBase = resolvePaymentsBaseUrl();
+  if (!paymentsBase) {
+    throw new Error(
+      'Payment link base URL is not configured. Set PAYMENTS_BASE_URL (recommended) or FRONTEND_APP_URL to your public frontend root, e.g. https://mordecaitech.com',
+    );
+  }
+
+  const baseUrl = `${paymentsBase}/p/${urlToken}`;
   return includeAttribution
     ? appendPaymentLinkAttribution(baseUrl, source, automationId)
     : baseUrl;

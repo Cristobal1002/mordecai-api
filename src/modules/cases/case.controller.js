@@ -53,4 +53,14 @@ export const caseController = {
       next(error);
     }
   },
+
+  updateDebtorForCase: async (req, res, next) => {
+    try {
+      const { tenantId, caseId } = req.params;
+      const result = await caseService.updateDebtorForCase(tenantId, caseId, req.body || {});
+      res.ok(result, 'Debtor contact updated');
+    } catch (error) {
+      next(error);
+    }
+  },
 };

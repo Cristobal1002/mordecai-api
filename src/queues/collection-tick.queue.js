@@ -5,6 +5,7 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { logger } from '../utils/logger.js';
+import { withBullmqPrefix } from './bullmq-queue-options.js';
 
 export const COLLECTION_TICK_QUEUE_NAME = 'collection-tick';
 
@@ -24,7 +25,10 @@ export function getCollectionTickQueue() {
   if (queue) return queue;
   const conn = getConnection();
   if (!conn) return null;
-  queue = new Queue(COLLECTION_TICK_QUEUE_NAME, { connection: conn });
+  queue = new Queue(
+    COLLECTION_TICK_QUEUE_NAME,
+    withBullmqPrefix({ connection: conn })
+  );
   return queue;
 }
 
