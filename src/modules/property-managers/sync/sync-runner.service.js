@@ -25,6 +25,9 @@ import { getConnector, hasConnector } from '../connectors/connector.factory.js';
 import { propertyManagersService } from '../property-managers.service.js';
 import { logger } from '../../../utils/logger.js';
 
+/** err.code when another SyncRun is still pending/running for this connection (concurrent jobs / stale row). */
+export const PMS_SYNC_ALREADY_IN_PROGRESS = 'PMS_SYNC_ALREADY_IN_PROGRESS';
+
 const STEPS = ['debtors_leases', 'charges', 'payments', 'balances_aging'];
 
 async function ensureConnection(connectionId) {
@@ -739,7 +742,12 @@ export async function runSync(connectionId, options = {}) {
   });
   if (active) {
     logger.warn({ connectionId, activeRunId: active.id }, 'PMS sync rejected: already in progress');
-    throw new Error(`PMS sync already in progress for connection ${connectionId} (run ${active.id})`);
+    const err = new Error(
+      `PMS sync already in progress for connection ${connectionId} (run ${active.id})`
+    );
+    err.code = PMS_SYNC_ALREADY_IN_PROGRESS;
+    err.activeRunId = active.id;
+    throw err;
   }
 
   const trigger = options.trigger ?? 'manual';

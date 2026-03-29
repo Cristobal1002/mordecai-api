@@ -5,6 +5,7 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { logger } from '../utils/logger.js';
+import { withBullmqPrefix } from './bullmq-queue-options.js';
 
 export const CASE_ACTIONS_QUEUE_NAME = 'case-actions';
 
@@ -24,7 +25,7 @@ let queue = null;
 function getConnection() {
   if (connection) return connection;
 
-  const url = process.env.REDIS_URL;
+  const url = process.env.REDIS_URL?.trim();
   if (!url) return null;
 
   connection = new IORedis(url, { maxRetriesPerRequest: null });
@@ -41,7 +42,10 @@ export function getCaseActionsQueue() {
   const conn = getConnection();
   if (!conn) return null;
 
-  queue = new Queue(CASE_ACTIONS_QUEUE_NAME, { connection: conn });
+  queue = new Queue(
+    CASE_ACTIONS_QUEUE_NAME,
+    withBullmqPrefix({ connection: conn })
+  );
   return queue;
 }
 

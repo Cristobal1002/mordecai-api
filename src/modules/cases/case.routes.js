@@ -7,6 +7,7 @@ import {
   pauseCaseValidator,
   resumeCaseValidator,
   triggerCallValidator,
+  updateDebtorForCaseValidator,
 } from './case.validator.js';
 import { validateRequest } from '../../middlewares/validate-request.middleware.js';
 
@@ -46,6 +47,15 @@ router.post(
   triggerCallValidator,
   validateRequest,
   caseController.triggerCall
+);
+
+// PATCH /api/v1/tenants/:tenantId/cases/:caseId/debtor — correct name / email / phone after PMS mistakes
+router.patch(
+  '/:tenantId/cases/:caseId/debtor',
+  requireAuth(),
+  updateDebtorForCaseValidator,
+  validateRequest,
+  caseController.updateDebtorForCase
 );
 
 export default router;

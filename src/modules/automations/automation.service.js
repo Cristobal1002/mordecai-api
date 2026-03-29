@@ -12,6 +12,8 @@ import { NotFoundError, ConflictError } from '../../errors/index.js';
 import { logger } from '../../utils/logger.js';
 import { resolveApprovalStatus } from '../cases/approval-resolver.service.js';
 import { expireStaleCallInteractionsForDebtCase } from '../elevenlabs/eleven.service.js';
+import { runSmsCaseDispatch } from '../collections/sms-case-dispatch.runner.js';
+import { getBullmqPrefix } from '../../queues/bullmq-queue-options.js';
 
 const ELIGIBLE_STATUSES = ['NEW', 'IN_PROGRESS', 'CONTACTED', 'PROMISE_TO_PAY', 'PAYMENT_PLAN', 'NO_ANSWER', 'REFUSED'];
 
@@ -682,6 +684,9 @@ export const automationService = {
           daysPastDue: dc.daysPastDue ?? dc.days_past_due,
           approvalStatus: dc.approvalStatus ?? dc.approval_status,
           debtorName: debtor?.fullName ?? debtor?.full_name,
+          debtorId: debtor?.id ?? null,
+          debtorEmail: debtor?.email ?? null,
+          debtorPhone: debtor?.phone ?? null,
           leaseNumber,
         }
         : null,
@@ -1060,6 +1065,39 @@ export const automationService = {
       throw new ConflictError('Case has no phone number');
     }
 
+    const inlineSms =
+      process.env.DISPATCH_SMS_INLINE === 'true' ||
+      process.env.DISPATCH_SMS_INLINE === '1';
+
+    if (inlineSms) {
+      logger.info(
+        {
+          tenantId: automation.tenantId,
+          debtCaseId: state.debtCaseId,
+          automationId: automation.id,
+        },
+        'DISPATCH_SMS_INLINE: sending collection SMS in-process (no queue)'
+      );
+      const dispatchResult = await runSmsCaseDispatch({
+        tenantId: automation.tenantId,
+        caseId: state.debtCaseId,
+        automationId: automation.id,
+        stateId: state.id,
+      });
+      if (!dispatchResult?.ok) {
+        throw new ConflictError(
+          dispatchResult?.message || 'SMS could not be sent'
+        );
+      }
+      return {
+        enqueued: false,
+        inline: true,
+        interactionLogId: dispatchResult.interactionLogId,
+        providerRef: dispatchResult.providerRef,
+        message: 'SMS sent',
+      };
+    }
+
     const jobId = await addCaseActionJob(CASE_ACTION_JOB_TYPES.SMS_CASE, {
       tenantId: automation.tenantId,
       caseId: state.debtCaseId,
@@ -1070,6 +1108,27 @@ export const automationService = {
     if (!jobId) {
       throw new ConflictError('SMS queue unavailable. Ensure REDIS_URL is set and worker is running.');
     }
+
+    const redisTarget = (() => {
+      const raw = process.env.REDIS_URL;
+      if (!raw) return null;
+      try {
+        return new URL(raw).host;
+      } catch {
+        return 'invalid-redis-url';
+      }
+    })();
+
+    logger.info(
+      {
+        jobId,
+        debtCaseId: state.debtCaseId,
+        automationId: automation.id,
+        redisHost: redisTarget,
+        bullmqPrefix: getBullmqPrefix() || 'bull (default)',
+      },
+      'SMS_CASE job enqueued — worker must use same REDIS_URL and BULLMQ_PREFIX'
+    );
 
     await CollectionEvent.create({
       automationId,

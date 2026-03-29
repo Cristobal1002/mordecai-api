@@ -4,7 +4,10 @@
  * Skips connection if lock cannot be acquired (manual sync in progress).
  */
 import { PmsConnection } from '../../models/index.js';
-import { runSync } from '../property-managers/sync/sync-runner.service.js';
+import {
+  PMS_SYNC_ALREADY_IN_PROGRESS,
+  runSync,
+} from '../property-managers/sync/sync-runner.service.js';
 import { refreshCasesFromPms } from '../property-managers/case-refresh.service.js';
 import { buildNewCasesFromPms } from '../property-managers/case-build.service.js';
 import { acquireLock, releaseLock } from '../../utils/pms-sync-lock.js';
@@ -38,6 +41,13 @@ export async function runHourlyMaintenanceForConnection(tenantId, connectionId) 
       newCases: buildResult.created ?? 0,
     };
   } catch (err) {
+    if (err?.code === PMS_SYNC_ALREADY_IN_PROGRESS) {
+      logger.info(
+        { tenantId, connectionId, activeRunId: err.activeRunId },
+        'Hourly maintenance: skip (sync already active in DB — e.g. PMS queue job or another worker)'
+      );
+      return { skipped: true, reason: 'sync_already_running' };
+    }
     logger.error({ err, tenantId, connectionId }, 'Hourly maintenance: failed');
     throw err;
   } finally {

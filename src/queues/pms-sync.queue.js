@@ -4,6 +4,7 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { logger } from '../utils/logger.js';
+import { withBullmqPrefix } from './bullmq-queue-options.js';
 
 export const PMS_SYNC_QUEUE_NAME = 'pms-sync';
 
@@ -31,7 +32,7 @@ export function getPmsSyncQueue() {
   if (queue) return queue;
   const conn = getConnection();
   if (!conn) return null;
-  queue = new Queue(PMS_SYNC_QUEUE_NAME, { connection: conn });
+  queue = new Queue(PMS_SYNC_QUEUE_NAME, withBullmqPrefix({ connection: conn }));
   return queue;
 }
 

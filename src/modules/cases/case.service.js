@@ -1,6 +1,7 @@
 import { caseRepository } from './case.repository.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
 import { NotFoundError, BadRequestError } from '../../errors/index.js';
+import { Debtor, PmsDebtor } from '../../models/index.js';
 import { addCallCaseJob, getCaseActionsQueue } from '../../queues/case-actions.queue.js';
 import { expireStaleCallInteractionsForDebtCase } from '../elevenlabs/eleven.service.js';
 
@@ -141,5 +142,70 @@ export const caseService = {
     }
 
     return { enqueued: true, jobId, message: 'Call enqueued. The worker will place the call shortly.' };
+  },
+
+  /**
+   * Correct resident contact on the canonical debtor (and linked PMS debtor when known)
+   * so SMS/email/calls and the next PMS sync stay aligned.
+   */
+  updateDebtorForCase: async (tenantId, debtCaseId, body) => {
+    const tenant = await tenantRepository.findById(tenantId);
+    if (!tenant) throw new NotFoundError('Tenant');
+
+    const debtCase = await caseRepository.findDebtCaseById(debtCaseId, tenantId);
+    if (!debtCase) throw new NotFoundError('Case');
+
+    const plain = debtCase.get ? debtCase.get({ plain: true }) : debtCase;
+    const debtorId = plain.debtorId;
+    const debtorRow = plain.debtor || {};
+    const meta = plain.meta || {};
+
+    const updates = {};
+    if (body.fullName !== undefined) {
+      const n = String(body.fullName).trim();
+      if (!n) throw new BadRequestError('fullName cannot be empty');
+      updates.fullName = n;
+    }
+    if (body.email !== undefined) {
+      const e =
+        body.email === null || body.email === ''
+          ? null
+          : String(body.email).trim();
+      updates.email = e || null;
+    }
+    if (body.phone !== undefined) {
+      const raw =
+        body.phone === null || body.phone === ''
+          ? null
+          : String(body.phone).trim().replace(/[\s()-]/g, '');
+      updates.phone = raw || null;
+    }
+    if (Object.keys(updates).length === 0) {
+      throw new BadRequestError('Provide at least one of: fullName, email, phone');
+    }
+
+    const debtor = await Debtor.findOne({ where: { id: debtorId, tenantId } });
+    if (!debtor) throw new NotFoundError('Debtor');
+
+    await debtor.update(updates);
+
+    const pmsDebtorId = meta.pms_debtor_id ?? debtorRow.metadata?.pms_debtor_id;
+    if (pmsDebtorId) {
+      const pmsUpdates = {};
+      if (updates.fullName !== undefined) pmsUpdates.displayName = updates.fullName;
+      if (updates.email !== undefined) pmsUpdates.email = updates.email;
+      if (updates.phone !== undefined) pmsUpdates.phone = updates.phone;
+      if (Object.keys(pmsUpdates).length > 0) {
+        await PmsDebtor.update(pmsUpdates, { where: { id: pmsDebtorId, tenantId } });
+      }
+    }
+
+    await debtor.reload();
+    return {
+      id: debtor.id,
+      fullName: debtor.fullName,
+      email: debtor.email,
+      phone: debtor.phone,
+    };
   },
 };
