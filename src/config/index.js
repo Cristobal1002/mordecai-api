@@ -1,6 +1,13 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
-dotenv.config();
+const __configDir = path.dirname(fileURLToPath(import.meta.url));
+const apiPkgRoot = path.resolve(__configDir, '..', '..');
+
+// mordecai-api/.env first (stable when cwd is repo root or mordecai-workers/), then cwd .env for missing keys only
+dotenv.config({ path: path.join(apiPkgRoot, '.env'), quiet: true });
+dotenv.config({ path: path.join(process.cwd(), '.env'), quiet: true });
 
 const requiredEnvVars = [
   'DB_NAME',

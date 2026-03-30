@@ -119,25 +119,25 @@ refresh_workers_api_dependency() {
     node -e '
       const fs = require("fs");
       const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      process.stdout.write((pkg.dependencies && pkg.dependencies["mordcai-api"]) || "");
+      process.stdout.write((pkg.dependencies && pkg.dependencies["mordecai-api"]) || "");
     ' "$WORKERS_DIR/package.json"
   )"
 
   if [[ -z "$dep_spec" ]]; then
-    echo "Skipping worker dependency refresh: mordcai-api dependency not found in $WORKERS_DIR/package.json"
+    echo "Skipping worker dependency refresh: mordecai-api dependency not found in $WORKERS_DIR/package.json"
     return
   fi
 
   # If the worker depends on a Git ref, refresh lockfile to latest commit in that ref
   # so docker build does not keep an old pinned commit.
   if [[ "$dep_spec" == git+* || "$dep_spec" == github:* || "$dep_spec" == https://* ]]; then
-    echo "Refreshing mordcai-api dependency lock in $WORKERS_DIR ($dep_spec)"
+    echo "Refreshing mordecai-api dependency lock in $WORKERS_DIR ($dep_spec)"
     (
       cd "$WORKERS_DIR"
-      npm install --package-lock-only --force "mordcai-api@$dep_spec"
+      npm install --package-lock-only --force "mordecai-api@$dep_spec"
     )
   else
-    echo "mordcai-api dependency is '$dep_spec' (non-git). Lock refresh step not required."
+    echo "mordecai-api dependency is '$dep_spec' (non-git). Lock refresh step not required."
   fi
 }
 
