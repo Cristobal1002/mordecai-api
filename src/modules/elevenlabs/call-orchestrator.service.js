@@ -16,7 +16,9 @@ import {
   isAllowedTransition,
   normalizeCallState,
 } from "./call-state-machine.js";
-import { classifyCallAction } from "./nlu/action-classifier.service.js";
+import {
+  classifyCallAction,
+} from "./nlu/action-classifier.service.js";
 import { extractSlotPatch } from "./nlu/slot-extractor.service.js";
 import {
   DEFAULT_CALL_SLOTS,
@@ -35,6 +37,8 @@ import { getPlanCatalogFromResolvedPolicy } from "./policy/plan-catalog.service.
 
 const ACTION_CONFIDENCE_THRESHOLD =
   Number(process.env.CALL_ACTION_CONFIDENCE_THRESHOLD) || 0.6;
+const MAX_STATE_STACK_DEPTH =
+  Math.max(1, Number(process.env.CALL_STATE_STACK_MAX_DEPTH) || 1);
 
 const DEFAULT_TELEMETRY = Object.freeze({
   transition_count: 0,
@@ -44,12 +48,129 @@ const DEFAULT_TELEMETRY = Object.freeze({
   low_confidence_count: 0,
   fallback_llm_count: 0,
   tool_mismatch_count: 0,
+  interruption_count: 0,
+  llm_transition_proposed_count: 0,
+  llm_transition_accepted_count: 0,
+  llm_transition_rejected_count: 0,
   avg_nlu_confidence: 0,
   loop_rate: 0,
   slot_overwrite_rate: 0,
   fallback_llm_rate: 0,
   tool_mismatch_rate: 0,
 });
+
+const POST_TOOL_CONFIRM_STATES = new Set([
+  CALL_STATES.POST_DELIVERY_CONFIRM,
+  CALL_STATES.POST_DISPUTE_CONFIRM,
+]);
+
+const INTERRUPTION_TRIGGER_ACTIONS = new Set([
+  "ASK_BALANCE",
+  "ASK_OPTIONS",
+  "ASK_PLAN_SUMMARY",
+  "ASK_LINK_DESTINATION",
+  "ASK_LINK_CHANNEL",
+]);
+
+const normalizeStackAction = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (["PUSH", "POP", "NONE"].includes(normalized)) return normalized;
+  return "NONE";
+};
+
+const normalizeStateStack = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((frame) => {
+      if (!frame || typeof frame !== "object") return null;
+      const returnState = normalizeCallState(frame.return_state);
+      if (!returnState) return null;
+      return {
+        return_state: returnState,
+        interruption_topic:
+          String(frame.interruption_topic || "").trim() || null,
+        entered_at: String(frame.entered_at || "").trim() || null,
+        source: String(frame.source || "").trim() || null,
+      };
+    })
+    .filter(Boolean)
+    .slice(-MAX_STATE_STACK_DEPTH);
+};
+
+const getTopStateFrame = (stack = []) =>
+  Array.isArray(stack) && stack.length > 0 ? stack[stack.length - 1] : null;
+
+const deriveInterruptionTopicFromAction = (action) => {
+  switch (action) {
+    case "ASK_BALANCE":
+      return "BALANCE";
+    case "ASK_OPTIONS":
+      return "OPTIONS";
+    case "ASK_PLAN_SUMMARY":
+      return "PLAN_SUMMARY";
+    case "ASK_LINK_DESTINATION":
+      return "LINK_DESTINATION";
+    case "ASK_LINK_CHANNEL":
+      return "LINK_CHANNEL";
+    case "CONFIRM_LINK_RECEIPT":
+      return "LINK_RECEIPT";
+    case "REPORT_LINK_NOT_RECEIVED":
+      return "LINK_NOT_RECEIVED";
+    default:
+      return "GENERAL";
+  }
+};
+
+const resolveTransitionProposal = (entities = {}) => {
+  if (!entities || typeof entities !== "object") {
+    return {
+      proposedNextState: null,
+      stackAction: "NONE",
+      interruptionTopic: null,
+    };
+  }
+
+  const proposedNextState = normalizeCallState(
+    entities.proposed_next_state ??
+      entities.proposedNextState ??
+      entities.llm_proposed_next_state ??
+      entities.llmProposedNextState ??
+      null,
+  );
+
+  return {
+    proposedNextState,
+    stackAction: normalizeStackAction(
+      entities.stack_action ??
+        entities.stackAction ??
+        entities.llm_stack_action ??
+        entities.llmStackAction,
+    ),
+    interruptionTopic:
+      String(
+        entities.interruption_topic ??
+          entities.interruptionTopic ??
+          entities.llm_interruption_topic ??
+          entities.llmInterruptionTopic ??
+          "",
+      ).trim() || null,
+  };
+};
+
+const resolveAllowedToolsForState = (state) => {
+  switch (state) {
+    case CALL_STATES.CONFIRM_AGREEMENT:
+    case CALL_STATES.EXECUTE_AGREEMENT:
+      return ["create-payment-agreement"];
+    case CALL_STATES.DISPUTE_CAPTURE:
+    case CALL_STATES.EXECUTE_DISPUTE:
+      return ["create-dispute"];
+    default:
+      return [];
+  }
+};
 
 const normalizeText = (value) =>
   String(value || "")
@@ -156,6 +277,12 @@ const resolvePreviousCallState = (interaction) => {
     callState?.slots && typeof callState.slots === "object"
       ? callState.slots
       : {};
+  const previousFacts =
+    callState?.facts && typeof callState.facts === "object"
+      ? callState.facts
+      : {};
+  const previousStateStack = normalizeStateStack(callState?.state_stack);
+  const topFrame = getTopStateFrame(previousStateStack);
   const previousTelemetry =
     callState?.telemetry && typeof callState.telemetry === "object"
       ? callState.telemetry
@@ -174,6 +301,15 @@ const resolvePreviousCallState = (interaction) => {
   return {
     callState,
     previousSlots: { ...DEFAULT_CALL_SLOTS, ...previousSlots },
+    previousFacts,
+    previousStateStack,
+    previousReturnState:
+      normalizeCallState(callState?.return_state) ||
+      normalizeCallState(topFrame?.return_state) ||
+      null,
+    previousInterruptionTopic:
+      String(callState?.interruption_topic || topFrame?.interruption_topic || "")
+        .trim() || null,
     previousTelemetry: { ...DEFAULT_TELEMETRY, ...previousTelemetry },
     previousProposalSnapshot,
     previousProposalCommitted,
@@ -292,6 +428,10 @@ const computeTelemetry = ({
   invalidTransition,
   toolAction,
   reducer,
+  enteredInterruption,
+  llmProposal,
+  llmTransitionAccepted,
+  llmTransitionRejected,
 }) => {
   const transitionCount = Number(previousTelemetry.transition_count || 0) + 1;
   const loopCount =
@@ -322,6 +462,18 @@ const computeTelemetry = ({
   const toolMismatchCount =
     Number(previousTelemetry.tool_mismatch_count || 0) +
     (hasToolMismatch ? 1 : 0);
+  const interruptionCount =
+    Number(previousTelemetry.interruption_count || 0) +
+    (enteredInterruption ? 1 : 0);
+  const llmTransitionProposedCount =
+    Number(previousTelemetry.llm_transition_proposed_count || 0) +
+    (llmProposal?.proposedNextState ? 1 : 0);
+  const llmTransitionAcceptedCount =
+    Number(previousTelemetry.llm_transition_accepted_count || 0) +
+    (llmTransitionAccepted ? 1 : 0);
+  const llmTransitionRejectedCount =
+    Number(previousTelemetry.llm_transition_rejected_count || 0) +
+    (llmTransitionRejected ? 1 : 0);
 
   const previousTransitions = Number(previousTelemetry.transition_count || 0);
   const previousAverage = Number(previousTelemetry.avg_nlu_confidence || 0);
@@ -338,6 +490,10 @@ const computeTelemetry = ({
     low_confidence_count: lowConfidenceCount,
     fallback_llm_count: fallbackLlmCount,
     tool_mismatch_count: toolMismatchCount,
+    interruption_count: interruptionCount,
+    llm_transition_proposed_count: llmTransitionProposedCount,
+    llm_transition_accepted_count: llmTransitionAcceptedCount,
+    llm_transition_rejected_count: llmTransitionRejectedCount,
     avg_nlu_confidence: Number(avgNluConfidence.toFixed(4)),
     loop_rate: toRate(loopCount, transitionCount),
     slot_overwrite_rate: toRate(slotOverwriteCount, transitionCount),
@@ -429,13 +585,23 @@ export const orchestrateCallStepFromTool = async ({
   const {
     callState: previousCallState,
     previousSlots,
+    previousFacts,
+    previousStateStack,
+    previousReturnState,
+    previousInterruptionTopic,
     previousTelemetry,
     previousProposalSnapshot,
     previousProposalCommitted,
   } = resolvePreviousCallState(interaction);
 
+  const transitionProposal = resolveTransitionProposal(entities);
+  const actionClassificationState =
+    normalizedState === CALL_STATES.INTERRUPTION && previousReturnState
+      ? previousReturnState
+      : normalizedState;
+
   const actionDecision = classifyCallAction({
-    state: normalizedState,
+    state: actionClassificationState,
     intentHint,
     entities,
     utterance: userUtterance,
@@ -444,7 +610,7 @@ export const orchestrateCallStepFromTool = async ({
   const slotPatchFromExtractor = extractSlotPatch({
     entities,
     utterance: userUtterance,
-    currentState: normalizedState,
+    currentState: actionClassificationState,
     allowedPlanTypes: planCatalog.allowedPlanTypes,
     allowedDeliveryChannels,
   });
@@ -462,8 +628,66 @@ export const orchestrateCallStepFromTool = async ({
     allowedDeliveryChannels,
   });
 
+  const isQuestionAction = INTERRUPTION_TRIGGER_ACTIONS.has(
+    actionDecision.action,
+  );
+  const llmRequestedInterruption =
+    transitionProposal.proposedNextState === CALL_STATES.INTERRUPTION &&
+    transitionProposal.stackAction !== "POP";
+  const shouldResumeFromInterruption =
+    normalizedState === CALL_STATES.INTERRUPTION &&
+    Boolean(previousReturnState) &&
+    !isQuestionAction &&
+    transitionProposal.proposedNextState !== CALL_STATES.INTERRUPTION &&
+    transitionProposal.stackAction !== "PUSH";
+
+  let reducerState = normalizedState;
+  let stateStack = [...previousStateStack];
+  let returnState = previousReturnState || null;
+  let interruptionTopic = previousInterruptionTopic || null;
+  let enteredInterruption = false;
+  let resumedFromInterruption = false;
+  let llmTransitionAccepted = false;
+  let llmTransitionRejected = false;
+
+  if (shouldResumeFromInterruption) {
+    reducerState = previousReturnState;
+    stateStack = stateStack.slice(0, -1);
+    const nextTopFrame = getTopStateFrame(stateStack);
+    returnState = normalizeCallState(nextTopFrame?.return_state) || null;
+    interruptionTopic =
+      String(nextTopFrame?.interruption_topic || "").trim() || null;
+    resumedFromInterruption = true;
+  } else {
+    const canEnterInterruption =
+      normalizedState !== CALL_STATES.CLOSE &&
+      normalizedState !== CALL_STATES.INTERRUPTION &&
+      stateStack.length < MAX_STATE_STACK_DEPTH &&
+      (llmRequestedInterruption ||
+        (isQuestionAction && !POST_TOOL_CONFIRM_STATES.has(normalizedState)));
+
+    if (canEnterInterruption) {
+      const frame = {
+        return_state: normalizedState,
+        interruption_topic:
+          transitionProposal.interruptionTopic ||
+          deriveInterruptionTopicFromAction(actionDecision.action),
+        entered_at: new Date().toISOString(),
+        source: llmRequestedInterruption ? "llm_proposal" : "auto",
+      };
+      stateStack = [...stateStack, frame].slice(-MAX_STATE_STACK_DEPTH);
+      returnState = frame.return_state;
+      interruptionTopic = frame.interruption_topic;
+      reducerState = CALL_STATES.INTERRUPTION;
+      enteredInterruption = true;
+      llmTransitionAccepted = llmRequestedInterruption;
+    } else if (llmRequestedInterruption) {
+      llmTransitionRejected = true;
+    }
+  }
+
   const reducer = reduceCallState({
-    state: normalizedState,
+    state: reducerState,
     action: actionDecision.action,
     slots: mergedSlots,
     previousSlots,
@@ -474,6 +698,10 @@ export const orchestrateCallStepFromTool = async ({
       currency: debtCase.currency || "USD",
       planCatalog,
       allowedDeliveryChannels,
+      facts: previousFacts,
+      returnState,
+      interruptionTopic,
+      stateStack,
     },
   });
 
@@ -492,10 +720,10 @@ export const orchestrateCallStepFromTool = async ({
 
   const proposedNextState = reducer.nextState;
   const invalidTransition = !isAllowedTransition(
-    normalizedState,
+    reducerState,
     proposedNextState,
   );
-  const nextState = invalidTransition ? normalizedState : proposedNextState;
+  const nextState = invalidTransition ? reducerState : proposedNextState;
   const toolAction = invalidTransition ? CALL_ACTIONS.NONE : reducer.toolAction;
   const shouldClose = nextState === CALL_STATES.CLOSE;
   const nowIso = new Date().toISOString();
@@ -535,12 +763,34 @@ export const orchestrateCallStepFromTool = async ({
     previousTelemetry,
     actionDecision,
     slotOverwrites,
-    stateBefore: normalizedState,
+    stateBefore: reducerState,
     stateAfter: nextState,
     invalidTransition,
     toolAction,
     reducer,
+    enteredInterruption,
+    llmProposal: transitionProposal,
+    llmTransitionAccepted,
+    llmTransitionRejected,
   });
+
+  const nextFacts = {
+    ...previousFacts,
+  };
+
+  if (reducer.intentLabel === "callback_requested") {
+    nextFacts.closing_context = "callback_requested";
+  }
+
+  const persistedStateStack = shouldClose ? [] : stateStack;
+  const topFrame = getTopStateFrame(persistedStateStack);
+  const persistedReturnState = shouldClose
+    ? null
+    : normalizeCallState(topFrame?.return_state) || returnState || null;
+  const persistedInterruptionTopic = shouldClose
+    ? null
+    : String(topFrame?.interruption_topic || interruptionTopic || "").trim() ||
+      null;
 
   await interaction.update({
     aiData: {
@@ -570,6 +820,10 @@ export const orchestrateCallStepFromTool = async ({
           proposal_drafts: proposalDrafts,
           proposal_snapshot: proposalSnapshot,
           proposal_committed: proposalCommitted,
+          facts: nextFacts,
+          state_stack: persistedStateStack,
+          return_state: persistedReturnState,
+          interruption_topic: persistedInterruptionTopic,
           telemetry,
           transition_count: telemetry.transition_count,
           updated_at: nowIso,
@@ -587,6 +841,7 @@ export const orchestrateCallStepFromTool = async ({
     payload: {
       interaction_id: interaction.id,
       state_before: normalizedState,
+      reducer_state: reducerState,
       state_after: nextState,
       dialog_action: actionDecision.action,
       dialog_action_confidence: Number(actionDecision.confidence || 0),
@@ -595,6 +850,12 @@ export const orchestrateCallStepFromTool = async ({
       action: toolAction,
       should_close: shouldClose,
       invalid_transition_blocked: invalidTransition,
+      interruption_entered: enteredInterruption,
+      interruption_resumed: resumedFromInterruption,
+      state_stack_depth: persistedStateStack.length,
+      llm_transition_proposed: transitionProposal.proposedNextState || null,
+      llm_transition_accepted: llmTransitionAccepted,
+      llm_transition_rejected: llmTransitionRejected,
       telemetry: {
         transition_count: telemetry.transition_count,
         loop_rate: telemetry.loop_rate,
@@ -611,12 +872,19 @@ export const orchestrateCallStepFromTool = async ({
       interactionId: interaction.id,
       debtCaseId: debtCase.id,
       stateBefore: normalizedState,
+      reducerState,
       stateAfter: nextState,
       dialogAction: actionDecision.action,
       dialogActionConfidence: actionDecision.confidence,
       toolAction,
       shouldClose,
       invalidTransition,
+      enteredInterruption,
+      resumedFromInterruption,
+      stateStackDepth: persistedStateStack.length,
+      llmTransitionProposed: transitionProposal.proposedNextState,
+      llmTransitionAccepted,
+      llmTransitionRejected,
     },
     "ElevenLabs call FSM step orchestrated",
   );
@@ -625,6 +893,7 @@ export const orchestrateCallStepFromTool = async ({
     ok: true,
     interaction_id: interaction.id,
     current_state: normalizedState,
+    reducer_state: reducerState,
     next_state: nextState,
     state_changed: normalizedState !== nextState,
     dialog_action: actionDecision.action,
@@ -640,6 +909,18 @@ export const orchestrateCallStepFromTool = async ({
     proposal_drafts: proposalDrafts,
     proposal_snapshot: proposalSnapshot,
     proposal_committed: proposalCommitted,
+    facts: nextFacts,
+    state_stack: persistedStateStack,
+    return_state: persistedReturnState,
+    interruption_topic: persistedInterruptionTopic,
+    allowed_tools: resolveAllowedToolsForState(nextState),
+    llm_transition: {
+      proposed_next_state: transitionProposal.proposedNextState || null,
+      stack_action: transitionProposal.stackAction,
+      interruption_topic: transitionProposal.interruptionTopic,
+      accepted: llmTransitionAccepted,
+      rejected: llmTransitionRejected,
+    },
     telemetry,
     policy: buildPolicyResponse({
       planCatalog,
