@@ -30,6 +30,36 @@ const humanizeAllowedPlans = (planCatalog) => {
   return plans.map((code) => humanizePlan(code, planCatalog)).join(", ");
 };
 
+const buildDeliveryOptionsText = (allowedDeliveryChannels = []) => {
+  if (
+    !Array.isArray(allowedDeliveryChannels) ||
+    allowedDeliveryChannels.length === 0
+  ) {
+    return "email, sms, or both";
+  }
+  return allowedDeliveryChannels.join(", ");
+};
+
+const normalizeFacts = (facts) =>
+  facts && typeof facts === "object" && !Array.isArray(facts) ? facts : {};
+
+const buildAgreementSummary = ({ slots, planCatalog, currency, facts = {} }) => {
+  const committedPlan =
+    normalizeFacts(facts.last_committed_plan) || normalizeFacts(facts.plan);
+  const planSource =
+    committedPlan.plan_type || committedPlan.planType ? committedPlan : slots;
+  const planLabel = humanizePlan(planSource.plan_type, planCatalog);
+  const upfrontAmount = toDisplayAmount(planSource.upfront_amount_cents);
+  const installmentsChunk =
+    planSource.installments_count && Number(planSource.installments_count) > 0
+      ? `, installments ${planSource.installments_count}`
+      : "";
+  const deliveryChannel =
+    planSource.delivery_channel || committedPlan.delivery_channel || "email";
+
+  return `Plan ${planLabel}, upfront ${upfrontAmount} ${currency}${installmentsChunk}, delivery channel ${deliveryChannel}.`;
+};
+
 const resolveAgreementProgressState = ({ slots, planCatalog }) => {
   const planType = String(slots?.plan_type || "")
     .trim()
@@ -62,25 +92,271 @@ const resolveAgreementProgressState = ({ slots, planCatalog }) => {
   return CALL_STATES.EXECUTE_AGREEMENT;
 };
 
-const buildAgreementSummary = ({ slots, planCatalog, currency }) => {
-  const planLabel = humanizePlan(slots.plan_type, planCatalog);
-  const upfrontAmount = toDisplayAmount(slots.upfront_amount_cents);
-  const installmentsChunk =
-    slots.installments_count && Number(slots.installments_count) > 0
-      ? `, installments ${slots.installments_count}`
-      : "";
-  return `Plan ${planLabel}, upfront ${upfrontAmount} ${currency}${installmentsChunk}, delivery channel ${slots.delivery_channel}.`;
+const buildClosingMessage = ({ tenantName, facts = {} }) => {
+  const closingContext = String(facts?.closing_context || "").trim();
+
+  if (closingContext === "agreement_created") {
+    return `Thank you for your time today. Your secure link has been sent, and we're here if you need any help. Goodbye.`;
+  }
+
+  if (closingContext === "dispute_registered") {
+    return `Thank you for explaining that today. We've recorded your dispute and the team will review it as soon as possible. Goodbye.`;
+  }
+
+  if (closingContext === "callback_requested") {
+    return `Thank you for your time today. We'll follow up with you shortly. Goodbye.`;
+  }
+
+  return `Thank you for speaking with ${tenantName}. Take care and goodbye.`;
 };
 
-const buildDeliveryOptionsText = (allowedDeliveryChannels = []) => {
-  if (
-    !Array.isArray(allowedDeliveryChannels) ||
-    allowedDeliveryChannels.length === 0
-  ) {
-    return "email, sms, or both";
+const buildPostDeliveryPrompt = ({ deliveryFacts = {} }) => {
+  const successfulChannels = Array.isArray(deliveryFacts.successful_channels)
+    ? deliveryFacts.successful_channels
+    : [];
+  const email = String(deliveryFacts.email || "").trim();
+
+  if (successfulChannels.includes("email") && email) {
+    return `I sent it to ${email}. Could you let me know if you received it?`;
   }
-  return allowedDeliveryChannels.join(", ");
+
+  if (successfulChannels.includes("email") && successfulChannels.includes("sms")) {
+    return "I sent the secure link by email and by SMS. Could you let me know if you received it?";
+  }
+
+  if (successfulChannels.includes("email")) {
+    return "I sent the secure link by email. Could you let me know if you received it?";
+  }
+
+  if (successfulChannels.includes("sms")) {
+    return "I sent the secure link by SMS. Could you let me know if you received it?";
+  }
+
+  return "The secure link is ready. Do you need me to clarify anything before we close?";
 };
+
+const buildPostDisputePrompt = ({ deliveryFacts = {} }) => {
+  const successfulChannels = Array.isArray(deliveryFacts.successful_channels)
+    ? deliveryFacts.successful_channels
+    : [];
+  const email = String(deliveryFacts.email || "").trim();
+
+  if (successfulChannels.includes("email") && email) {
+    return `I sent the secure case link to ${email}. Could you let me know if you received it?`;
+  }
+
+  if (successfulChannels.includes("email") && successfulChannels.includes("sms")) {
+    return "I sent the secure case link by email and by SMS. Could you let me know if you received it?";
+  }
+
+  if (successfulChannels.includes("email")) {
+    return "I sent the secure case link by email. Could you let me know if you received it?";
+  }
+
+  if (successfulChannels.includes("sms")) {
+    return "I sent the secure case link by SMS. Could you let me know if you received it?";
+  }
+
+  return "Your dispute is registered. Do you need me to clarify anything else before we close?";
+};
+
+const buildSentBySummary = (deliveryFacts = {}) => {
+  const successfulChannels = Array.isArray(deliveryFacts.successful_channels)
+    ? deliveryFacts.successful_channels
+    : [];
+  const email = String(deliveryFacts.email || "").trim();
+
+  if (successfulChannels.includes("email") && successfulChannels.includes("sms")) {
+    return email
+      ? `I sent it to ${email} and by SMS.`
+      : "I sent it by email and by SMS.";
+  }
+
+  if (successfulChannels.includes("email")) {
+    return email ? `I sent it to ${email}.` : "I sent it by email.";
+  }
+
+  if (successfulChannels.includes("sms")) {
+    return "I sent it by SMS.";
+  }
+
+  return "I have the secure link ready, but I don't see a successful delivery recorded yet.";
+};
+
+const buildBalanceAnswer = ({ balanceAmount, currency, state }) => {
+  const followUp =
+    state === CALL_STATES.POST_DELIVERY_CONFIRM ||
+    state === CALL_STATES.POST_DISPUTE_CONFIRM
+      ? " Could you let me know if you received the link?"
+      : " Which option works best for you?";
+
+  return `Your current balance is ${balanceAmount} ${currency}.${followUp}`;
+};
+
+const buildOptionsAnswer = ({ planCatalog, state }) => {
+  const options = humanizeAllowedPlans(planCatalog);
+  const followUp =
+    state === CALL_STATES.POST_DELIVERY_CONFIRM ||
+    state === CALL_STATES.POST_DISPUTE_CONFIRM
+      ? " Do you need help with anything else about the link?"
+      : " Which option works best for you?";
+
+  return `Your available options are ${options}.${followUp}`;
+};
+
+const buildResumePrompt = ({
+  returnState,
+  debtorName,
+  slots,
+  planCatalog,
+  balanceCents,
+  currency,
+  allowedDeliveryChannels,
+  facts,
+}) => {
+  const deliveryFacts = normalizeFacts(facts.last_delivery_result);
+  const disputeSummary = normalizeFacts(facts.last_dispute_summary);
+
+  if (!returnState) {
+    return "Let's continue.";
+  }
+
+  switch (returnState) {
+    case CALL_STATES.VERIFY_IDENTITY:
+      return `For privacy, am I speaking with ${debtorName}?`;
+    case CALL_STATES.DISCLOSE_DEBT:
+    case CALL_STATES.PLAN_SELECTION:
+      return "Which option works best for you?";
+    case CALL_STATES.CAPTURE_UPFRONT: {
+      const plan =
+        planCatalog?.plansByCode?.[String(slots?.plan_type || "").toUpperCase()];
+      const minPct = Number(plan?.minUpfrontPct || 0);
+      const minUpfrontAmount = Math.ceil(
+        (Math.max(0, minPct) / 100) * Number(balanceCents || 0),
+      );
+      return minUpfrontAmount > 0
+        ? `Now, please confirm your upfront amount. Minimum is ${toDisplayAmount(minUpfrontAmount)} ${currency}.`
+        : "Now, please confirm your upfront payment amount.";
+    }
+    case CALL_STATES.CAPTURE_INSTALLMENTS: {
+      const plan =
+        planCatalog?.plansByCode?.[String(slots?.plan_type || "").toUpperCase()];
+      const maxInstallments = Number(
+        plan?.maxInstallments || planCatalog?.maxInstallments || 4,
+      );
+      return `Now, how many installments do you prefer? Maximum is ${maxInstallments}.`;
+    }
+    case CALL_STATES.CAPTURE_DELIVERY_CHANNEL:
+      return `Now, please choose a delivery channel: ${buildDeliveryOptionsText(
+        allowedDeliveryChannels,
+      )}.`;
+    case CALL_STATES.CONFIRM_AGREEMENT:
+      return `${buildAgreementSummary({
+        slots,
+        planCatalog,
+        currency,
+        facts,
+      })} Please confirm if you want me to create the payment agreement now.`;
+    case CALL_STATES.DISPUTE_CAPTURE:
+      if (!slots?.dispute_reason) {
+        return "Now, please share the main reason for the dispute.";
+      }
+      if (!slots?.delivery_channel) {
+        return `Now, which delivery channel should we use: ${buildDeliveryOptionsText(
+          allowedDeliveryChannels,
+        )}?`;
+      }
+      return "Now, would you like me to register the dispute?";
+    case CALL_STATES.POST_DELIVERY_CONFIRM:
+      return buildPostDeliveryPrompt({ deliveryFacts });
+    case CALL_STATES.POST_DISPUTE_CONFIRM:
+      if (disputeSummary.reason) {
+        return `I registered your dispute and ${buildPostDisputePrompt({
+          deliveryFacts,
+        }).charAt(0).toLowerCase()}${buildPostDisputePrompt({
+          deliveryFacts,
+        }).slice(1)}`;
+      }
+      return buildPostDisputePrompt({ deliveryFacts });
+    default:
+      return "Let's continue.";
+  }
+};
+
+const buildInterruptionAnswer = ({
+  action,
+  returnState,
+  facts,
+  balanceAmount,
+  currency,
+  planCatalog,
+  slots,
+}) => {
+  const deliveryFacts = normalizeFacts(facts.last_delivery_result);
+  const disputeSummary = normalizeFacts(facts.last_dispute_summary);
+
+  if (
+    returnState === CALL_STATES.VERIFY_IDENTITY &&
+    [
+      CALL_DIALOG_ACTIONS.ASK_BALANCE,
+      CALL_DIALOG_ACTIONS.ASK_OPTIONS,
+      CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY,
+    ].includes(action)
+  ) {
+    return "For privacy, I can discuss account details after identity verification.";
+  }
+
+  switch (action) {
+    case CALL_DIALOG_ACTIONS.ASK_BALANCE:
+      return `Your current balance is ${balanceAmount} ${currency}.`;
+    case CALL_DIALOG_ACTIONS.ASK_OPTIONS:
+      return `Your available options are ${humanizeAllowedPlans(planCatalog)}.`;
+    case CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY:
+      if (
+        [CALL_STATES.DISPUTE_CAPTURE, CALL_STATES.POST_DISPUTE_CONFIRM].includes(
+          returnState,
+        ) &&
+        disputeSummary.reason
+      ) {
+        return `I have your dispute recorded with reason ${String(
+          disputeSummary.reason,
+        )
+          .toLowerCase()
+          .replace(/_/g, " ")}.`;
+      }
+      return buildAgreementSummary({
+        slots,
+        planCatalog,
+        currency,
+        facts,
+      });
+    case CALL_DIALOG_ACTIONS.ASK_LINK_DESTINATION:
+    case CALL_DIALOG_ACTIONS.ASK_LINK_CHANNEL:
+      return buildSentBySummary(deliveryFacts);
+    case CALL_DIALOG_ACTIONS.CONFIRM_LINK_RECEIPT:
+      return "Thank you for confirming that you received it.";
+    case CALL_DIALOG_ACTIONS.REPORT_LINK_NOT_RECEIVED:
+      return `${buildSentBySummary(
+        deliveryFacts,
+      )} Please check your inbox, spam folder, or messages.`;
+    default:
+      return "I can clarify your balance, payment options, agreement summary, or where the link was sent.";
+  }
+};
+
+const withBaseResult = (state) => ({
+  nextState: state,
+  toolAction: CALL_ACTIONS.NONE,
+  speakBack: "",
+  intentLabel: "unknown",
+  flags: {
+    requestAgreementSnapshot: false,
+    commitAgreementProposal: false,
+    commitDisputeProposal: false,
+    resetAgreementFields: false,
+    toolMismatch: false,
+  },
+});
 
 export const reduceCallState = ({ state, action, slots, context }) => {
   const debtorName = context?.debtorName || "the account holder";
@@ -93,20 +369,12 @@ export const reduceCallState = ({ state, action, slots, context }) => {
   )
     ? context.allowedDeliveryChannels
     : [];
+  const facts = normalizeFacts(context?.facts);
+  const returnState = context?.returnState || null;
+  const lastDeliveryResult = normalizeFacts(facts.last_delivery_result);
+  const lastDisputeSummary = normalizeFacts(facts.last_dispute_summary);
 
-  const result = {
-    nextState: state,
-    toolAction: CALL_ACTIONS.NONE,
-    speakBack: "",
-    intentLabel: "unknown",
-    flags: {
-      requestAgreementSnapshot: false,
-      commitAgreementProposal: false,
-      commitDisputeProposal: false,
-      resetAgreementFields: false,
-      toolMismatch: false,
-    },
-  };
+  const result = withBaseResult(state);
 
   if (
     action === CALL_DIALOG_ACTIONS.REQUEST_CALLBACK ||
@@ -114,25 +382,50 @@ export const reduceCallState = ({ state, action, slots, context }) => {
   ) {
     result.nextState = CALL_STATES.CLOSE;
     result.toolAction = CALL_ACTIONS.END_CALL;
-    result.speakBack = "Understood. I will arrange a callback. Thank you.";
+    result.speakBack =
+      "Understood. I'll arrange a callback for you. Thank you for your time today. Goodbye.";
     result.intentLabel = "callback_requested";
+    result.flags.callbackRequested = true;
     return result;
   }
 
   if (action === CALL_DIALOG_ACTIONS.END_CALL || slots?.goodbye === true) {
     result.nextState = CALL_STATES.CLOSE;
     result.toolAction = CALL_ACTIONS.END_CALL;
-    result.speakBack = `Thank you for speaking with ${tenantName}. Goodbye.`;
+    result.speakBack = buildClosingMessage({ tenantName, facts });
     result.intentLabel = "goodbye";
     return result;
   }
 
-  // Once a call is closed, always keep it closed and ask runtime to end call.
   if (state === CALL_STATES.CLOSE) {
     result.nextState = CALL_STATES.CLOSE;
     result.toolAction = CALL_ACTIONS.END_CALL;
-    result.speakBack = `Thank you for speaking with ${tenantName}. Goodbye.`;
+    result.speakBack = buildClosingMessage({ tenantName, facts });
     result.intentLabel = "already_closed";
+    return result;
+  }
+
+  if (state === CALL_STATES.INTERRUPTION) {
+    result.nextState = CALL_STATES.INTERRUPTION;
+    result.speakBack = `${buildInterruptionAnswer({
+      action,
+      returnState,
+      facts,
+      balanceAmount,
+      currency,
+      planCatalog,
+      slots,
+    })} ${buildResumePrompt({
+      returnState,
+      debtorName,
+      slots,
+      planCatalog,
+      balanceCents: context?.balanceCents,
+      currency,
+      allowedDeliveryChannels,
+      facts,
+    })}`;
+    result.intentLabel = "interruption_answered";
     return result;
   }
 
@@ -143,7 +436,7 @@ export const reduceCallState = ({ state, action, slots, context }) => {
     ) {
       result.nextState = CALL_STATES.CLOSE;
       result.toolAction = CALL_ACTIONS.END_CALL;
-      result.speakBack = `Understood. I cannot discuss account details without identity verification for ${debtorName}. Goodbye.`;
+      result.speakBack = `Understood. I can't discuss account details without identity verification for ${debtorName}. Thank you for your time. Goodbye.`;
       result.intentLabel = "identity_denied";
       return result;
     }
@@ -174,6 +467,150 @@ export const reduceCallState = ({ state, action, slots, context }) => {
     return result;
   }
 
+  if (action === CALL_DIALOG_ACTIONS.ASK_BALANCE) {
+    result.nextState = state;
+    result.speakBack = buildBalanceAnswer({ balanceAmount, currency, state });
+    result.intentLabel = "balance_answered";
+    return result;
+  }
+
+  if (action === CALL_DIALOG_ACTIONS.ASK_OPTIONS) {
+    result.nextState = state;
+    result.speakBack = buildOptionsAnswer({ planCatalog, state });
+    result.intentLabel = "options_answered";
+    return result;
+  }
+
+  if (state === CALL_STATES.POST_DELIVERY_CONFIRM) {
+    if (action === CALL_DIALOG_ACTIONS.ASK_LINK_DESTINATION) {
+      result.nextState = CALL_STATES.POST_DELIVERY_CONFIRM;
+      result.speakBack = `${buildSentBySummary(lastDeliveryResult)} Could you let me know if you received it?`;
+      result.intentLabel = "delivery_destination_answered";
+      return result;
+    }
+
+    if (action === CALL_DIALOG_ACTIONS.ASK_LINK_CHANNEL) {
+      result.nextState = CALL_STATES.POST_DELIVERY_CONFIRM;
+      result.speakBack = `${buildSentBySummary(lastDeliveryResult)} Could you let me know if you received it?`;
+      result.intentLabel = "delivery_channel_answered";
+      return result;
+    }
+
+    if (action === CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY) {
+      result.nextState = CALL_STATES.POST_DELIVERY_CONFIRM;
+      result.speakBack = `${buildAgreementSummary({
+        slots,
+        planCatalog,
+        currency,
+        facts,
+      })} ${buildPostDeliveryPrompt({
+        deliveryFacts: lastDeliveryResult,
+      })}`;
+      result.intentLabel = "plan_summary_answered";
+      return result;
+    }
+
+    if (action === CALL_DIALOG_ACTIONS.REPORT_LINK_NOT_RECEIVED) {
+      result.nextState = CALL_STATES.POST_DELIVERY_CONFIRM;
+      result.speakBack = `${buildSentBySummary(
+        lastDeliveryResult,
+      )} Please check your inbox, spam folder, or messages. If you still don't see it, I can arrange a callback.`;
+      result.intentLabel = "delivery_not_received";
+      return result;
+    }
+
+    if (action === CALL_DIALOG_ACTIONS.CONFIRM_LINK_RECEIPT) {
+      result.nextState = CALL_STATES.CLOSE;
+      result.toolAction = CALL_ACTIONS.END_CALL;
+      result.speakBack = buildClosingMessage({
+        tenantName,
+        facts: {
+          ...facts,
+          closing_context: facts.closing_context || "agreement_created",
+        },
+      });
+      result.intentLabel = "delivery_received";
+      return result;
+    }
+
+    result.nextState = CALL_STATES.POST_DELIVERY_CONFIRM;
+    result.speakBack = buildPostDeliveryPrompt({
+      deliveryFacts: lastDeliveryResult,
+    });
+    result.intentLabel = "post_delivery_follow_up";
+    return result;
+  }
+
+  if (state === CALL_STATES.POST_DISPUTE_CONFIRM) {
+    if (
+      action === CALL_DIALOG_ACTIONS.ASK_LINK_DESTINATION ||
+      action === CALL_DIALOG_ACTIONS.ASK_LINK_CHANNEL
+    ) {
+      result.nextState = CALL_STATES.POST_DISPUTE_CONFIRM;
+      result.speakBack = `${buildSentBySummary(lastDeliveryResult)} Could you let me know if you received it?`;
+      result.intentLabel = "dispute_delivery_answered";
+      return result;
+    }
+
+    if (action === CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY) {
+      result.nextState = CALL_STATES.POST_DISPUTE_CONFIRM;
+      result.speakBack =
+        lastDisputeSummary.reason
+          ? `I registered your dispute with reason ${String(
+              lastDisputeSummary.reason,
+            )
+              .toLowerCase()
+              .replace(/_/g, " ")}. ${buildPostDisputePrompt({
+              deliveryFacts: lastDeliveryResult,
+            })}`
+          : buildPostDisputePrompt({ deliveryFacts: lastDeliveryResult });
+      result.intentLabel = "dispute_summary_answered";
+      return result;
+    }
+
+    if (action === CALL_DIALOG_ACTIONS.REPORT_LINK_NOT_RECEIVED) {
+      result.nextState = CALL_STATES.POST_DISPUTE_CONFIRM;
+      result.speakBack = `${buildSentBySummary(
+        lastDeliveryResult,
+      )} Please check your inbox, spam folder, or messages. If you still don't see it, I can arrange a callback for you.`;
+      result.intentLabel = "dispute_delivery_not_received";
+      return result;
+    }
+
+    if (action === CALL_DIALOG_ACTIONS.CONFIRM_LINK_RECEIPT) {
+      result.nextState = CALL_STATES.CLOSE;
+      result.toolAction = CALL_ACTIONS.END_CALL;
+      result.speakBack = buildClosingMessage({
+        tenantName,
+        facts: {
+          ...facts,
+          closing_context: facts.closing_context || "dispute_registered",
+        },
+      });
+      result.intentLabel = "dispute_delivery_received";
+      return result;
+    }
+
+    result.nextState = CALL_STATES.POST_DISPUTE_CONFIRM;
+    result.speakBack = buildPostDisputePrompt({
+      deliveryFacts: lastDeliveryResult,
+    });
+    result.intentLabel = "post_dispute_follow_up";
+    return result;
+  }
+
+  if (action === CALL_DIALOG_ACTIONS.ASK_PLAN_SUMMARY) {
+    result.nextState = state;
+    result.speakBack = `${buildAgreementSummary({
+      slots,
+      planCatalog,
+      currency,
+      facts,
+    })} What would you like to do next?`;
+    result.intentLabel = "plan_summary_answered";
+    return result;
+  }
+
   const disputeFlowRequested =
     action === CALL_DIALOG_ACTIONS.OPEN_DISPUTE ||
     action === CALL_DIALOG_ACTIONS.PROVIDE_DISPUTE_REASON ||
@@ -200,7 +637,7 @@ export const reduceCallState = ({ state, action, slots, context }) => {
 
     result.nextState = CALL_STATES.EXECUTE_DISPUTE;
     result.toolAction = CALL_ACTIONS.CALL_CREATE_DISPUTE;
-    result.speakBack = "Understood. I will register the dispute now.";
+    result.speakBack = "Understood. I'll register the dispute now.";
     result.intentLabel = "dispute_ready_to_execute";
     result.flags.commitDisputeProposal = true;
     return result;
@@ -283,7 +720,7 @@ export const reduceCallState = ({ state, action, slots, context }) => {
   if (progressState === CALL_STATES.CONFIRM_AGREEMENT) {
     result.nextState = CALL_STATES.CONFIRM_AGREEMENT;
     result.speakBack =
-      `${buildAgreementSummary({ slots, planCatalog, currency })} ` +
+      `${buildAgreementSummary({ slots, planCatalog, currency, facts })} ` +
       "Please confirm if you want me to create the payment agreement now.";
     result.intentLabel = "agreement_pending_confirmation";
     result.flags.requestAgreementSnapshot = true;
@@ -298,7 +735,7 @@ export const reduceCallState = ({ state, action, slots, context }) => {
     ) {
       result.nextState = CALL_STATES.CONFIRM_AGREEMENT;
       result.speakBack =
-        `${buildAgreementSummary({ slots, planCatalog, currency })} ` +
+        `${buildAgreementSummary({ slots, planCatalog, currency, facts })} ` +
         "Please confirm if you want me to create the payment agreement now.";
       result.intentLabel = "agreement_pending_confirmation";
       result.flags.requestAgreementSnapshot = true;
@@ -307,7 +744,7 @@ export const reduceCallState = ({ state, action, slots, context }) => {
 
     result.nextState = CALL_STATES.EXECUTE_AGREEMENT;
     result.toolAction = CALL_ACTIONS.CALL_CREATE_PAYMENT_AGREEMENT;
-    result.speakBack = "Understood. I will create your payment agreement now.";
+    result.speakBack = "Understood. I'll create your payment agreement now.";
     result.intentLabel = "agreement_ready_to_execute";
     result.flags.commitAgreementProposal = true;
     return result;
@@ -315,7 +752,7 @@ export const reduceCallState = ({ state, action, slots, context }) => {
 
   result.nextState = CALL_STATES.CLOSE;
   result.toolAction = CALL_ACTIONS.END_CALL;
-  result.speakBack = `Thank you for speaking with ${tenantName}. Goodbye.`;
+  result.speakBack = buildClosingMessage({ tenantName, facts });
   result.intentLabel = "close";
   return result;
 };
