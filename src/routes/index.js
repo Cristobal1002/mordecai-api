@@ -27,6 +27,7 @@ import elevenRoutes from '../modules/elevenlabs/eleven.routes.js';
 import demoRoutes from '../modules/demo/demo.routes.js';
 import payRoutes from '../modules/pay/pay.routes.js';
 import backofficeRoutes from '../modules/backoffice/backoffice.routes.js';
+import discoveryRoutes from '../modules/discovery/discovery.routes.js';
 
 import { config } from '../config/index.js';
 
@@ -59,6 +60,7 @@ const routes = (app) => {
   router.use('/twilio', twilioRoutes);
   router.use('/eleven', elevenRoutes);
   router.use('/demo', demoRoutes);
+  router.use('/public/discovery', discoveryRoutes);
 
   app.use(`/api/${config.app.apiVersion}`, router);
 

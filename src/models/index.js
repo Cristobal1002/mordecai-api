@@ -43,6 +43,7 @@ import { TenantBranding } from './tenant-branding.model.js';
 import { PaymentLink } from './payment-link.model.js';
 import { CaseDispute } from './case-dispute.model.js';
 import { TenantSubscription } from './tenant-subscription.model.js';
+import { DiscoverySession } from './discovery-session.model.js';
 
 export const initModels = (sequelize) => {
   // Inicializar modelos
@@ -87,6 +88,7 @@ export const initModels = (sequelize) => {
   PaymentLink.initModel(sequelize);
   CaseDispute.initModel(sequelize);
   TenantSubscription.initModel(sequelize);
+  DiscoverySession.initModel(sequelize);
 
   // Definir relaciones
 
@@ -317,5 +319,6 @@ export {
   PaymentLink,
   CaseDispute,
   TenantSubscription,
+  DiscoverySession,
 };
 

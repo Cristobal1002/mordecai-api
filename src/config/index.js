@@ -85,5 +85,9 @@ export const config = {
   },
   // PMS credentials at rest: base64-encoded 32-byte key. Generate: openssl rand -base64 32
   credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY || null,
+  /** Optional. If set, PUT /public/discovery/sessions/:id requires header x-mordecai-discovery-secret */
+  discovery: {
+    ingestSecret: process.env.DISCOVERY_INGEST_SECRET || '',
+  },
 };
 
